@@ -30,18 +30,20 @@ eq('resolveRule 目标层 + 节点排序', [rT.nodes, rT.roiFloor, rT.budget], [
 eq('resolveRule 非法节点被过滤', resolveRule(CFG, { account: 'A', rules: { hourly: { nodes: [0, 60, 15, '30'] } } }).nodes, [15, 30])
 
 /* ---------- 2. judgeHourly：自然小时判定 ---------- */
-const R = { roiFloor: 2.4, minCost: 1, budget: 200, controlHours: 0.5 }
+const R = { roiFloor: 2.4, minCost: 200, budget: 200, controlHours: 0.5 }
 const H = (rows) => ({ hour: '2026-11-19 09:00', rows })
 eq('没花钱 -> no-spend', judgeHourly({}, H([{ cost: 0, gmv: 0, orders: 0 }]), R).reason, 'no-spend')
 eq('没数据行 -> no-data', judgeHourly({}, H([]), R).reason, 'no-data')
-eq('ROI 1.08 < 2.4 -> 控 200', judgeHourly({}, H([{ cost: 129.46, gmv: 109, orders: 1 }]), R),
-  { cost: 129.46, gmv: 109, orders: 1, roi: 0.84, action: 'control', budget: 200, hours: 0.5 })
-eq('ROI 恰好 2.4 -> 不控', judgeHourly({}, H([{ cost: 100, gmv: 240, orders: 1 }]), R).action, 'skip')
-eq('ROI 3.40 -> 不控', judgeHourly({}, H([{ cost: 169.34, gmv: 575.76, orders: 3 }]), R).reason, 'roi-ok')
-eq('消耗低于 minCost -> 不控', judgeHourly({}, H([{ cost: 0.5, gmv: 0, orders: 0 }]), { ...R, minCost: 1 }).reason, 'below-min-cost')
-eq('多计划汇总成抖音号', judgeHourly({}, H([{ cost: 100, gmv: 100, orders: 1 }, { cost: 100, gmv: 300, orders: 2 }]), R),
-  { cost: 200, gmv: 400, orders: 3, roi: 2, action: 'control', budget: 200, hours: 0.5 })
-eq('预算跟随目标覆盖值', judgeHourly({}, H([{ cost: 50, gmv: 10, orders: 1 }]), { ...R, budget: 300 }).budget, 300)
+eq('ROI 0.50 且消耗 500 -> 控 200', judgeHourly({}, H([{ cost: 500, gmv: 250, orders: 2 }]), R),
+  { cost: 500, gmv: 250, orders: 2, roi: 0.5, action: 'control', budget: 200, hours: 0.5 })
+eq('ROI 恰好 2.4 -> 不控', judgeHourly({}, H([{ cost: 500, gmv: 1200, orders: 4 }]), R).action, 'skip')
+eq('ROI 3.40 -> 不控', judgeHourly({}, H([{ cost: 500, gmv: 1700, orders: 5 }]), R).reason, 'roi-ok')
+eq('消耗 150 低于 minCost 200 -> 不控', judgeHourly({}, H([{ cost: 150, gmv: 100, orders: 1 }]), R).reason, 'below-min-cost')
+eq('消耗恰好 200 -> 不控（要严格超过 200）', judgeHourly({}, H([{ cost: 200, gmv: 100, orders: 1 }]), R).reason, 'below-min-cost')
+eq('消耗 200.01 -> 进入 ROI 判定', judgeHourly({}, H([{ cost: 200.01, gmv: 100, orders: 1 }]), R).action, 'control')
+eq('多计划汇总成抖音号', judgeHourly({}, H([{ cost: 150, gmv: 150, orders: 1 }, { cost: 150, gmv: 450, orders: 2 }]), R),
+  { cost: 300, gmv: 600, orders: 3, roi: 2, action: 'control', budget: 200, hours: 0.5 })
+eq('预算跟随目标覆盖值', judgeHourly({}, H([{ cost: 300, gmv: 10, orders: 1 }]), { ...R, budget: 300 }).budget, 300)
 
 /* ---------- 3. deliveringAccount / standby：同名抖音号谁在投 ---------- */
 eq('主力无备用 -> null', deliveringAccount(CFG, CFG.targets[0]), null)

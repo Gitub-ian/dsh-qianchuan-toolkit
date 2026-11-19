@@ -17,7 +17,7 @@
     },
     "controlHoursFixed": 0.5,
     "extraRoundAfterEndMinutes": 1,
-    "minCost": 1,
+    "minCost": 200,
     "extraMetrics": []
   },
   "accounts": []

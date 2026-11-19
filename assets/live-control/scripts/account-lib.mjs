@@ -68,9 +68,11 @@ async function openEntry(page, acct, say) {
 export async function ensureTabFor(acct, say = () => {}) {
   const t0 = Date.now()
   const pages = await listPages()
+  // 同一账号可能同时有全域与乘方两条产品线 → 标签页要按 entry 区分，否则会抢同一个标签
+  const wantPath = acct.entry === 'square' ? /\/overall-prom/ : /\/uni-prom/
   const hit = pages.find((p) => p.type === 'page'
     && (p.url || '').includes('aavid=' + acct.aavid)
-    && /(uni-prom|overall-prom)/.test(p.url || '')
+    && wantPath.test(p.url || '')
     && !/\/detail/.test(p.url || ''))
   let page
   if (hit) {
@@ -82,7 +84,7 @@ export async function ensureTabFor(acct, say = () => {}) {
     for (let i = 0; i < 40 && !found; i++) {
       await sleep(150)
       const now = await listPages()
-      found = now.find((p) => p.id === id || ((p.type === 'page') && (p.url || '').includes('aavid=' + acct.aavid)))
+      found = now.find((p) => p.id === id || ((p.type === 'page') && (p.url || '').includes('aavid=' + acct.aavid) && wantPath.test(p.url || '')))
     }
     if (!found) throw new Error('新建标签页失败（' + acct.key + '）')
     page = await connect('jinritemai', { id: found.id })

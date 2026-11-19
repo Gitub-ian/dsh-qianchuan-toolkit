@@ -29,7 +29,7 @@ export const paths = () => {
   }
 }
 
-const DEFAULT_HOURLY = { nodes: [15, 30, 45, 55], roiFloor: 2.4, minCost: 1, budget: 200, controlHours: 0.5, extraRoundAfterEndMinutes: 1 }
+const DEFAULT_HOURLY = { nodes: [15, 30, 45, 55], roiFloor: 2.4, minCost: 200, budget: 200, controlHours: 0.5, extraRoundAfterEndMinutes: 1 }
 
 function readJson(p, dflt) {
   try { return JSON.parse(fs.readFileSync(p, 'utf8')) } catch (e) { return dflt }
@@ -143,7 +143,8 @@ export function judgeHourly(target, hour, rule) {
   const roi = cost > 0 ? gmv / cost : 0
   const base = { cost: round2(cost), gmv: round2(gmv), orders, roi: round2(roi) }
   if (cost <= 0) return { ...base, action: 'skip', reason: 'no-spend' }
-  if (cost < rule.minCost) return { ...base, action: 'skip', reason: 'below-min-cost' }
+  // 小时消耗必须「超过」minCost 才做 ROI 判定（等于不算，避免边界抖动）
+  if (cost <= rule.minCost) return { ...base, action: 'skip', reason: 'below-min-cost' }
   if (roi < rule.roiFloor) return { ...base, action: 'control', budget: rule.budget, hours: rule.controlHours }
   return { ...base, action: 'skip', reason: 'roi-ok' }
 }

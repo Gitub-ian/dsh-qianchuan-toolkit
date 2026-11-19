@@ -22,7 +22,8 @@
     return {
       aweme: c(td[iAweme] && td[iAweme].innerText).slice(0, 26),
       status: c(td[iStatus] && td[iStatus].innerText).slice(0, 26),
-      live: /投放中/.test(c(td[iStatus] && td[iStatus].innerText)) && !/未开播/.test(c(td[iStatus] && td[iStatus].innerText)),
+      // 「已暂停」行常附带「有效投放中」这类诊断字样，必须用否定词兜住，否则会把暂停行当成在投
+      live: (() => { const s = c(td[iStatus] && td[iStatus].innerText); return /投放中/.test(s) && !/已暂停|未开播|审核中|预算不足|已结束/.test(s) })(),
       hasPause: names.includes('iconPauseFilled'),
       hasPlus: names.includes('oc-icon-plus'),
       tools: groupsOf(toolCell).map(labelOf),

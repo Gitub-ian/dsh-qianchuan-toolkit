@@ -155,7 +155,8 @@ async function gatherAccount(group) {
 
   log('    [' + acct.key + '] 查分时数据…')
   t = Date.now()
-  const data = JSON.parse(await page.eval(expr('hourly-data.js', { '{{ADV}}': acct.aavid })))
+  const groupAds = [...new Set(group.targets.flatMap((x) => x.ads || []).map(String).filter((id) => /^\d{6,}$/.test(id)))]
+  const data = JSON.parse(await page.eval(expr('hourly-data.js', { '{{ADV}}': acct.aavid, '{{ADS}}': JSON.stringify(groupAds) })))
   stage.queryMs = Date.now() - t
   if (!data.rows) { out.err = 'no-data'; stage.totalMs = Date.now() - t0; return out }
   out.day = data.day
