@@ -1,0 +1,24 @@
+{
+  "hourly": {
+    "enabled": true,
+    "nodes": [
+      15,
+      30,
+      45,
+      55
+    ],
+    "judge": {
+      "field": "netRoi",
+      "op": "<",
+      "value": 2.4
+    },
+    "control": {
+      "budget": 200
+    },
+    "controlHoursFixed": 0.5,
+    "extraRoundAfterEndMinutes": 1,
+    "minCost": 1,
+    "extraMetrics": []
+  },
+  "accounts": []
+}

@@ -1,0 +1,4 @@
+- insert:
+    - id: dsh-qianchuan-toolkit
+      name: 'dsh-qianchuan-toolkit'
+      config: {}

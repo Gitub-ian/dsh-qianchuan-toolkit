@@ -1,0 +1,19 @@
+{
+ "_说明": "按顺序尝试，第一个成功即停；enabled=false 可停用。放在 %USERPROFILE%\\.qianchuan-cruise\\notify.json",
+ "channels": [
+  {
+   "name": "微信-Server酱",
+   "type": "serverchan",
+   "enabled": false,
+   "url": "https://sctapi.ftqq.com/<SendKey>.send"
+  },
+  {
+   "name": "QQ-OneBot",
+   "type": "onebot",
+   "enabled": false,
+   "url": "http://127.0.0.1:3000",
+   "qq": 123456789,
+   "token": ""
+  }
+ ]
+}
