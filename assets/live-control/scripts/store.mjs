@@ -124,8 +124,13 @@ export function groupByAccount(cfg) {
 }
 
 export function appendJsonl(file, obj) {
-  fs.mkdirSync(path.dirname(file), { recursive: true })
-  fs.appendFileSync(file, JSON.stringify(obj) + '\n')
+  // 埋点写失败不能打断巡航：只告警，不抛出
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true })
+    fs.appendFileSync(file, JSON.stringify(obj) + '\n')
+  } catch (e) {
+    console.error('埋点写入失败（已忽略）：' + file + ' — ' + e.message)
+  }
 }
 
 /** 判定：一个抖音号当前小时的聚合 */
