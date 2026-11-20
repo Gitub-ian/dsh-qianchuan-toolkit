@@ -132,11 +132,15 @@ export async function connect(match = 'jinritemai', { autoDialog = true, id = nu
   await rawSend('Page.enable', {}).catch(() => {})
 
   return {
-    url: page.url,
+    url: page.url,        // 连接时的快照，导航后不会更新 —— 判断「现在在哪一页」必须用 href()
     title: page.title,
     id: page.id,
     dialogs,
     send: rawSend,
+    async href(fallback) {
+      // 实时 URL。page.url 是连接时快照，导航后仍是旧值（2026-11-20 16:15 误判「刷新后没找到该行」的根因）
+      try { const v = await this.eval('location.href', 8000); return v ? String(v) : (fallback || this.url) } catch (e) { return fallback || this.url }
+    },
     async eval(expr, timeoutMs = EVAL_TIMEOUT) {
       const r = await rawSend('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true, userGesture: true }, timeoutMs)
       if (r.exceptionDetails) throw new CdpError('eval 异常: ' + r.exceptionDetails.text + ' ' + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || '') + ' ||EXPR|| ' + String(expr).slice(0, 240))

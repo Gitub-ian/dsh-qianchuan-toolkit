@@ -210,45 +210,44 @@ async function gatherAccount(group) {
       if (!hr.rows.length) return { action: 'skip', reason: 'no-spend：本小时还没有消耗数据（刚开播或还没花钱）' }
       return judgeHourly(target, hr, rule)
     }
+    // 执行顺序（用户定的，别再改）：
+    //   刷新 → 读数据 → 先把「这小时要不要动」算出来；
+    //   不需要动（消耗没过 minCost / 未在投 / ROI 达标 / 没花钱）→ 到此为止，
+    //   绝不为「看看是不是在控量」去点弹窗、查日志、报异常（2026-11-20 16:15 误报就是这样来的）。
+    //   需要动、但行上不是「+」→ 才走排查流程（截图 → 日志 → 刷新 → 3 分钟）。
     let d
     if (target.delivery === 'standby') d = { action: 'skip', reason: 'standby：该抖音号实际由 ' + (other ? other.key + '(' + entryLabel(other.entry) + ')' : '其他账号') + ' 投放，此账号仅备用，不控' }
     else if (!row) d = { action: 'skip', reason: 'row-not-found：列表里没找到这个抖音号（是否已解绑/改名？）' }
-    else if (row.mode === 'pause' || row.mode === 'unknown') {
-      // 用户规则：看到「控量中」不能直接轮空、更不能直接报异常——先点开读结束时间，
-      // 读不到再查日志是否真有任务，逻辑不闭环就刷新界面重读，排查是否看错（素材追投组也有图标），
-      // 3 分钟还查不清才报异常。
-      let mode = row.mode
-      if (mode === 'unknown') {
-        log('      找不到「一键调速」组，刷新一次重读…')
-        await refreshList(page, acct)
-        const r2 = await readRowOf(page, target)
-        mode = r2 ? r2.mode : 'norow'
-        log('      刷新后 mode=' + mode)
-      }
-      if (mode === 'pause') {
-        const pr = await resolvePause(page, acct, target, (target.ads || [])[0] || null)
+    else {
+      const want = normalDecision()
+      if (want.action !== 'control') d = want
+      else if (row.mode === 'plus' || row.mode === 'none') d = want
+      else {
+        // 该控量，但行上是 ⏸ 或组找不到：按排查规则查清楚再决定
+        log('      判定要控量，但当前 mode=' + row.mode + '，先排查能不能创建…')
+        const pr = await resolveState(page, acct, target, (hr.ads[0] || (target.ads || [])[0] || null))
         if (pr.state === 'controlling') {
-          const stale = pr.endAt < Date.now() - 60000
+          const stale = pr.endAt < Date.now() - 120000
           d = {
             action: 'skip',
-            reason: 'controlling：正在控量 ' + (pr.startText || '') + ' ~ ' + (pr.endText || '') + (pr.budget ? '（预算 ' + pr.budget + ' 元）' : '') + (stale ? ' —— 异常：结束时间已过，⏸ 图标仍在（疑似残留）' : '，结束后加跑一轮') + '［依据：' + pr.source + '］',
+            reason: 'controlling：正在控量 ' + (pr.startText || '') + ' ~ ' + (pr.endText || '') + (pr.budget ? '（预算 ' + pr.budget + ' 元）' : '') + (stale ? ' —— 异常：结束时间已过 2 分钟，⏸ 图标仍在（疑似残留）' : '，结束后 +1 分钟加跑一轮') + '［依据：' + pr.source + '］',
             endAt: pr.endAt,
             pauseInfo: { startText: pr.startText, endText: pr.endText, budget: pr.budget },
             anomaly: stale ? 'pause-stale' : undefined,
+            evidence: pr.evidence, shot: pr.shot,
           }
         } else if (pr.state === 'free') {
-          log('      刷新后确认没有控量任务（mode=' + pr.mode + '），按正常规则继续判定')
-          d = normalDecision()
+          log('      排查确认没有控量任务（mode=' + pr.mode + '），按正常规则继续 → 控量')
+          d = want
         } else {
-          d = { action: 'skip', anomaly: 'pause-unresolved', reason: '异常：列表显示控量中，但弹窗与日志都读不到、刷新后仍是如此（' + pr.reason + '），本轮轮空' }
+          d = {
+            action: 'skip', anomaly: 'pause-unresolved',
+            reason: '异常：列表不是「+」（mode=' + row.mode + '），截图/日志/刷新排查 3 分钟仍未查清（' + pr.reason + '），本轮轮空',
+            evidence: pr.evidence, shot: pr.shot,
+          }
         }
-      } else if (mode === 'unknown' || mode === 'norow') {
-        d = { action: 'skip', anomaly: 'no-speed-group', reason: '异常：刷新后仍找不到「一键调速」组（可能改版），无法判断能否控量，本轮轮空' }
-      } else {
-        d = normalDecision()
       }
     }
-    else d = normalDecision()
 
     const rec = {
       target: target.id, aweme: target.awemeName, uid: target.awemeUniqueId || target.awemeName,
@@ -259,7 +258,11 @@ async function gatherAccount(group) {
       rule: { roiFloor: rule.roiFloor, budget: rule.budget }, decision: d,
     }
     out.decisions.push(rec)
-    if (d.anomaly) out.anomalies.push({ aweme: rec.aweme, kind: d.anomaly, msg: d.reason, hour: hr.hour })
+    if (d.anomaly) {
+      out.anomalies.push({ aweme: rec.aweme, kind: d.anomaly, msg: d.reason, hour: hr.hour, shot: d.shot || null, evidence: d.evidence || [] })
+      // 异常必须有可回溯材料：截图路径 + 证据链写进 errors.jsonl
+      jl(P.errors, { ts: new Date().toISOString(), account: acct.key, aweme: rec.aweme, kind: d.anomaly, msg: d.reason, shot: d.shot || null, evidence: d.evidence || [] })
+    }
     log('    ' + '[' + rec.entryLabel + '] ' + rec.aweme + ' [' + (row ? row.status : '未找到') + '] ' + hr.hour + '时 消耗 ' + rec.cost + ' 净成交 ' + rec.gmv + ' ROI ' + rec.roi + ' → ' + d.action + ' ' + (d.reason || ''))
   }
   // 逻辑自查：判定与现场证据不自洽就是异常（不只是「轮空」）
@@ -331,12 +334,25 @@ async function verifyLog(page, acct, o) {
   return { ms: Date.now() - t0, verified: checks.budget && checks.hours && checks.time, checks, row, rows: rows.slice(0, 3), detail: JSON.parse(head) }
 }
 
+// ---------- 当前页面判定 ----------
+// 绝不能用 page.url：那是连接时的快照，导航之后仍返回旧值。
+// 2026-11-20 16:15 事故就是它：读完日志导航回列表时 page.url 还写着列表页，
+// refreshList 以为「已在列表」直接 reload，结果 reload 的是详情页 → 15s 读不到行 → 误报异常。
+async function hrefOf(page) { return page.href ? page.href() : page.url }
+function pathOf(u) { try { return new URL(u).pathname } catch (e) { return '' } }
+
 // ---------- 刷新列表（唯一入口：强制忽略缓存 + 等新文档 + 等图标就绪） ----------
-async function refreshList(page, acct) {
-  const wantPath = new URL(listUrl(acct)).pathname
-  if (new URL(page.url).pathname !== wantPath) {
+async function refreshList(page, acct, why = '') {
+  const wantPath = pathOf(listUrl(acct))
+  let href = await hrefOf(page)
+  if (pathOf(href) !== wantPath) {
+    log('    [' + acct.key + '] 当前不在列表页（' + (pathOf(href) || '未知') + '）→ 先回到列表' + (why ? '；原因：' + why : ''))
     await page.send('Page.navigate', { url: listUrl(acct) }).catch(() => {})
+    // 等确实落到列表页；判据用实时 location.pathname，不用 page.url
+    await pollEval(page, 'location.pathname', (v) => String(v) === wantPath, 12000, 250)
     await sleep(600)
+    href = await hrefOf(page)
+    if (pathOf(href) !== wantPath) { log('    [' + acct.key + '] 回列表页失败，仍在 ' + (pathOf(href) || '未知')); return false }
   }
   let origin0 = null
   try { origin0 = String(await page.eval('performance.timeOrigin')) } catch (e) {}
@@ -345,23 +361,46 @@ async function refreshList(page, acct) {
   await pollEval(page, 'performance.timeOrigin', (v) => v && String(v) !== origin0, 12000, 200)
   await sleep(300)
   const wantLayout = acct.entry === 'square' ? 'square' : 'uni-prom'
-  return !!(await pollEval(page, expr('row-state.js'), (s) => {
+  const ready = !!(await pollEval(page, expr('row-state.js'), (s) => {
     try {
       const v = JSON.parse(s)
       if (!v || !v.hasAwemeCol || !v.iconsReady) return false
       if (v.layout !== wantLayout) return false
-      if (new URL(page.url).pathname !== wantPath) return false
       return (v.rows || []).some((r) => r.aweme && String(r.aweme).trim().length > 1)
     } catch (e) { return false }
   }, 15000, 350))
+  const nowPath = pathOf(await hrefOf(page))
+  if (!ready || nowPath !== wantPath) {
+    log('    [' + acct.key + '] 刷新后未就绪（页面 ' + (nowPath || '未知') + '，row-state ' + (ready ? 'ok' : '未就绪') + '）')
+    return false
+  }
+  return true
 }
 
 function rowMatch(rows, target) {
   return (rows || []).find((r) => (target.awemeUniqueId && r.aweme === target.awemeUniqueId) || r.aweme === target.awemeName || (target.awemeName && r.aweme.includes(target.awemeName.slice(0, 4)))) || null
 }
 
-async function readRowOf(page, target) {
-  try { return rowMatch(JSON.parse(await page.eval(expr('row-state.js'))).rows, target) } catch (e) { return null }
+// 重读行：单次读太脆（SPA 正在重渲染时会读到空表），改为最多重试 timeoutMs；
+// 读不到时把「当前页面路径 / 列表里有哪几行」打进日志，出问题能自证，不再只写「没找到该行」。
+async function readRowOf(page, target, timeoutMs = 10000) {
+  const t0 = Date.now()
+  let lastRows = []
+  let sawTable = false
+  while (Date.now() - t0 < timeoutMs) {
+    try {
+      const v = JSON.parse(await page.eval(expr('row-state.js')))
+      lastRows = v.rows || []
+      if (v.hasAwemeCol) sawTable = true
+      const hit = rowMatch(lastRows, target)
+      if (hit) return hit
+      if (sawTable) return null   // 表格已就绪且确实没有这一行
+    } catch (e) {}
+    await sleep(400)
+  }
+  if (lastRows.length) log('      重读 ' + Math.round(timeoutMs / 1000) + 's 没有该行；列表 ' + lastRows.length + ' 行：' + lastRows.map((r) => r.aweme).slice(0, 8).join(' / '))
+  else log('      重读 ' + Math.round(timeoutMs / 1000) + 's 仍读不到列表；当前页面 ' + (pathOf(await hrefOf(page)) || '未知'))
+  return null
 }
 
 // 日志闭环：读详情页「日志」里最近一条「一键控量」，用它反推这次控量是否还在有效期内。
@@ -371,7 +410,11 @@ async function readRecentControl(page, acct, adId) {
   try {
     await page.send('Page.navigate', { url: detailUrl(acct.aavid, adId) })
     const raw = await pollEval(page, expr('plan-log.js'), (v) => { try { return (JSON.parse(v).rows || []).length > 0 } catch (e) { return false } }, 12000)
+    // 必须等真的回到列表页再往下走（原来是不等就返回，调用方以为还在列表）
+    const wantPath = pathOf(listUrl(acct))
     await page.send('Page.navigate', { url: listUrl(acct) }).catch(() => {})
+    await pollEval(page, 'location.pathname', (v) => String(v) === wantPath, 12000, 250)
+    await sleep(400)
     if (!raw) return { ok: false, err: 'no-log-rows' }
     const rows = JSON.parse(raw).rows || []
     const row = rows.find((r) => /新建/.test(r.type) && /一键控量/.test(r.content))
@@ -384,39 +427,57 @@ async function readRecentControl(page, acct, adId) {
   } catch (e) { return { ok: false, err: e.message } }
 }
 
-// 行上显示 ⏸ 时的闭环排查（用户规则）：
-//   点开弹窗读控量时间 → 读不到就去日志核对 → 逻辑不闭环就刷新界面再读 →
-//   仍显示控量中且日志里确有未结束的任务 → 按控量中处理（结束时间来自日志）；
-//   刷新后没有 ⏸ → 说明刚才看错/图标残留，按正常规则继续判定；
-//   3 分钟都查不清才报异常。
-async function resolvePause(page, acct, target, adId) {
+// ---------- 出了问题时的排查（用户规则，写死在代码里，优先级最高） ----------
+//   遇到问题 → ① 截图留证 → ② 日志逻辑自查 → ③ 刷新界面复核 → ④ 尽量解决
+//   → ⑤ 3 分钟还没解决，才报异常。
+// 「列表显示控量中但读不到结束时间」「找不到一键调速组」都走这里，
+// 绝不允许一看不对就报异常、直接轮空。
+const INVESTIGATE_MS = 170000   // 约 3 分钟
+async function resolveState(page, acct, target, adId) {
   const t0 = Date.now()
-  const tried = []
+  const ev = []       // 证据链（进日志、异常文案、errors.jsonl）
+  let shot = null
   const fmt = (ms) => new Date(ms).toLocaleString('zh-CN')
-  const grab = async (tag) => {
+
+  // ① 截图留证（只在「出问题」时拍，不是每轮都拍，避免频繁操作）
+  try {
+    const dir = path.join(SHOTS, 'shots')
+    fs.mkdirSync(dir, { recursive: true })
+    const f = path.join(dir, new Date().toISOString().replace(/[:.]/g, '-') + '-' + (target.awemeUniqueId || target.id || 'aweme') + '.png')
+    shot = await page.shot(f)
+    ev.push('截图 ' + f)
+    log('      已截图留证：' + f)
+  } catch (e) { ev.push('截图失败 ' + e.message) }
+
+  // ②③ 读弹窗 → 查日志 → 刷新后重读行；每一步都记进证据链
+  const step = async (tag) => {
     const pi = await readPauseInfo(page, target.awemeName)
-    if (pi && pi.ok && pi.endAt) return { state: 'controlling', startText: pi.startText, endText: pi.endText, endAt: pi.endAt, budget: pi.budget, source: '弹窗/' + tag }
-    tried.push('弹窗(' + tag + '):' + ((pi && pi.reason) || 'unknown'))
+    if (pi && pi.ok && pi.endAt) return { state: 'controlling', startText: pi.startText, endText: pi.endText, endAt: pi.endAt, budget: pi.budget, source: '弹窗/' + tag, evidence: ev, shot }
+    ev.push('弹窗(' + tag + '):' + ((pi && pi.reason) || 'unknown'))
     const lg = await readRecentControl(page, acct, adId)
     if (lg && lg.ok && lg.endAt > Date.now()) {
-      return { state: 'controlling', startAt: lg.startAt, endAt: lg.endAt, startText: fmt(lg.startAt), endText: fmt(lg.endAt), budget: lg.budget, source: '日志/' + tag }
+      return { state: 'controlling', startAt: lg.startAt, endAt: lg.endAt, startText: fmt(lg.startAt), endText: fmt(lg.endAt), budget: lg.budget, source: '日志/' + tag, evidence: ev, shot }
     }
-    tried.push('日志(' + tag + '):' + (lg && lg.ok ? '最近一条已结束 ' + fmt(lg.endAt) : ((lg && lg.err) || 'none')))
+    ev.push('日志(' + tag + '):' + (lg && lg.ok ? '最近一条已结束 ' + fmt(lg.endAt) : ((lg && lg.err) || 'none')))
+    const row = await readRowOf(page, target)
+    if (!row) { ev.push('刷新(' + tag + '):没读到该行（页面 ' + (pathOf(await hrefOf(page)) || '未知') + '）'); return null }
+    ev.push('刷新(' + tag + '):mode=' + row.mode)
+    // 「+」回来了 / 组里既无 ⏸ 也禁用 → 没有控量任务，按正常规则继续（该控就控）
+    if (row.mode === 'plus') return { state: 'free', mode: 'plus', evidence: ev, shot }
+    if (row.mode === 'none') return { state: 'free', mode: 'none', evidence: ev, shot }
     return null
   }
-  let r = await grab('首次')
+
+  let r = await step('首次')
   if (r) return r
-  while (Date.now() - t0 < 170000) {
-    log('      排查中：刷新列表后重读（已用 ' + Math.round((Date.now() - t0) / 1000) + 's）…')
-    await refreshList(page, acct)
-    const row = await readRowOf(page, target)
-    if (!row) { tried.push('刷新:没找到该行'); break }
-    if (row.mode !== 'pause') return { state: 'free', mode: row.mode, via: 'refresh' }
-    r = await grab('刷新后')
+  while (Date.now() - t0 < INVESTIGATE_MS) {
+    log('      排查中：刷新列表后重读（已用 ' + Math.round((Date.now() - t0) / 1000) + 's，上限 3 分钟）…')
+    await refreshList(page, acct, '排查「控量中/找不到组」')
+    r = await step('刷新后')
     if (r) return r
     await sleep(2500)
   }
-  return { state: 'unknown', reason: tried.join(' / '), tried }
+  return { state: 'unknown', evidence: ev, shot, reason: ev.join(' / ') }
 }
 
 // ---------- 执行阶段 ----------
@@ -501,7 +562,7 @@ async function reportRound(i, recs, nextAt) {
   const anomalies = []
   for (const rec of recs) {
     if (rec.err) anomalies.push({ aweme: rec.name || rec.key, msg: '读取失败 ' + rec.err })
-    for (const a of rec.anomalies || []) anomalies.push({ aweme: (rec.name ? rec.name + ' / ' : '') + a.aweme, msg: a.msg })
+    for (const a of rec.anomalies || []) anomalies.push({ aweme: (rec.name ? rec.name + ' / ' : '') + a.aweme, msg: a.msg + (a.shot ? '（截图：' + a.shot + '）' : '') })
   }
   const head = anomalies.length ? ['⚠️ 本轮有 ' + anomalies.length + ' 处异常，请人工确认：', ...anomalies.map((a) => '  ⚠️ ' + a.aweme + ' — ' + a.msg)] : []
   const text = [...(anomalies.length ? head : []), '第 ' + i + ' 轮 · ' + new Date().toLocaleString('zh-CN'), ...lines, '下一轮 ' + (nextAt ? new Date(nextAt).toLocaleString('zh-CN') : '（收工）')].join('\n')
@@ -520,7 +581,16 @@ function nextSlot(nodes, extraAt = [], lastStart = 0) {
     }
   }
   for (const e of extraAt) if (e > floor) cands.push(e)
-  return cands.length ? Math.min(...cands) : now + 900000
+  if (!cands.length) return now + 900000
+  let best = Math.min(...cands)
+  // 用户规则：控量结束那一刻不要卡秒去巡航。若某个节点落在「控量结束前 150s ~ 结束后 20s」，
+  // 一律挪到「结束 + 1 分钟」，避免结束瞬间 ⏸ 图标还没回退、读不到结束时间而误判。
+  for (const e of extraAt) {
+    if (e <= floor) continue
+    const end = e - 60000
+    if (best >= end - 150000 && best <= end + 20000) best = e
+  }
+  return best
 }
 
 // ---- main ----
