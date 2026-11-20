@@ -170,28 +170,7 @@ async function gatherAccount(group) {
   // 控量结束后图标仍会残留，导致把「已结束」误判成「还在控」而漏控。
   log('    [' + acct.key + '] 刷新列表页（强制、忽略缓存）…')
   t = Date.now()
-  // 之前可能停在详情页（/uni-prom/detail 也有 th 表头，会被误判成就绪）→ 先确认路径是列表页
-  const wantPath = new URL(listUrl(acct)).pathname
-  if (new URL(page.url).pathname !== wantPath) {
-    await page.send('Page.navigate', { url: listUrl(acct) }).catch(() => {})
-    await sleep(600)
-  }
-  let origin0 = null
-  try { origin0 = String(await page.eval('performance.timeOrigin')) } catch (e) {}
-  await page.send('Page.reload', { ignoreCache: true }, 20000).catch(() => {})
-  // 等真正的重新加载：timeOrigin 变了才算新文档，否则会读到刷新前的旧 DOM（或空 DOM）
-  await pollEval(page, 'performance.timeOrigin', (v) => v && String(v) !== origin0, 12000, 200)
-  await sleep(300)
-  const wantLayout = acct.entry === 'square' ? 'square' : 'uni-prom'
-  const rf = await pollEval(page, expr('row-state.js'), (s) => {
-    try {
-      const v = JSON.parse(s)
-      if (!v || !v.hasAwemeCol || !v.iconsReady) return false
-      if (v.layout !== wantLayout) return false
-      if (new URL(page.url).pathname !== wantPath) return false
-      return (v.rows || []).some((r) => r.aweme && String(r.aweme).trim().length > 1)
-    } catch (e) { return false }
-  }, 15000, 350)
+  const rf = await refreshList(page, acct)
   stage.refreshMs = Date.now() - t
   if (!rf) log('    [' + acct.key + '] 刷新后 15s 仍未就绪，继续按当前 DOM 读')
 
@@ -225,36 +204,51 @@ async function gatherAccount(group) {
     const row = rows.find((r) => (target.awemeUniqueId && r.aweme === target.awemeUniqueId) || r.aweme === target.awemeName || (target.awemeName && r.aweme.includes(target.awemeName.slice(0, 4)))) || null
     const acts = readJsonl(P.actions).filter((a) => a.ok && !a.dryRun && a.aavid === acct.aavid && a.aweme === target.awemeName)
     const other = target.delivery === 'standby' ? deliveringAccount(cfg, target) : null
+    const normalDecision = () => {
+      if (!row.live) return { action: 'skip', reason: 'not-live：' + (row.status || '未在投放') }
+      if (!hr.ads.length) return { action: 'skip', reason: 'no-ads：没有该抖音号的 ad_id（先跑一次映射）' }
+      if (!hr.rows.length) return { action: 'skip', reason: 'no-spend：本小时还没有消耗数据（刚开播或还没花钱）' }
+      return judgeHourly(target, hr, rule)
+    }
     let d
     if (target.delivery === 'standby') d = { action: 'skip', reason: 'standby：该抖音号实际由 ' + (other ? other.key + '(' + entryLabel(other.entry) + ')' : '其他账号') + ' 投放，此账号仅备用，不控' }
     else if (!row) d = { action: 'skip', reason: 'row-not-found：列表里没找到这个抖音号（是否已解绑/改名？）' }
-    else if (row.mode === 'pause') {
-      // 行上 ⏸ = 有控量任务在跑：点开确认弹窗读「控量时间 起 ~ 止」，记下结束时间，到点后加跑一轮。
-      const pi = await readPauseInfo(page, target.awemeName)
-      const nowMs = Date.now()
-      if (pi && pi.ok && pi.endAt) {
-        const stale = pi.endAt < nowMs - 60000
-        d = {
-          action: 'skip',
-          reason: 'controlling：正在控量 ' + pi.startText + ' ~ ' + pi.endText + (pi.budget ? '（预算 ' + pi.budget + ' 元）' : '') + (stale ? ' —— 异常：结束时间已过，⏸ 图标仍在（疑似残留）' : '，结束后加跑一轮'),
-          endAt: pi.endAt,
-          pauseInfo: { startText: pi.startText, endText: pi.endText, budget: pi.budget },
-          anomaly: stale ? 'pause-stale' : undefined,
-        }
-      } else {
-        d = {
-          action: 'skip',
-          anomaly: 'pause-dialog-missing',
-          reason: '异常：列表显示控量中，但点开读不到「控量时间」（' + ((pi && pi.reason) || 'unknown') + '），本轮轮空',
-        }
+    else if (row.mode === 'pause' || row.mode === 'unknown') {
+      // 用户规则：看到「控量中」不能直接轮空、更不能直接报异常——先点开读结束时间，
+      // 读不到再查日志是否真有任务，逻辑不闭环就刷新界面重读，排查是否看错（素材追投组也有图标），
+      // 3 分钟还查不清才报异常。
+      let mode = row.mode
+      if (mode === 'unknown') {
+        log('      找不到「一键调速」组，刷新一次重读…')
+        await refreshList(page, acct)
+        const r2 = await readRowOf(page, target)
+        mode = r2 ? r2.mode : 'norow'
+        log('      刷新后 mode=' + mode)
       }
-    } else if (row.mode === 'unknown') {
-      // 找不到「一键调速」组 = 页面结构变了/没渲染完，逻辑上不能当成「控量中」。
-      d = { action: 'skip', anomaly: 'no-speed-group', reason: '异常：页面里找不到「一键调速」组（可能改版或未渲染完），无法判断能否控量，本轮轮空' }
-    } else if (!row.live) d = { action: 'skip', reason: 'not-live：' + (row.status || '未在投放') }
-    else if (!hr.ads.length) d = { action: 'skip', reason: 'no-ads：没有该抖音号的 ad_id（先跑一次映射）' }
-    else if (!hr.rows.length) d = { action: 'skip', reason: 'no-spend：本小时还没有消耗数据（刚开播或还没花钱）' }
-    else d = judgeHourly(target, hr, rule)
+      if (mode === 'pause') {
+        const pr = await resolvePause(page, acct, target, (target.ads || [])[0] || null)
+        if (pr.state === 'controlling') {
+          const stale = pr.endAt < Date.now() - 60000
+          d = {
+            action: 'skip',
+            reason: 'controlling：正在控量 ' + (pr.startText || '') + ' ~ ' + (pr.endText || '') + (pr.budget ? '（预算 ' + pr.budget + ' 元）' : '') + (stale ? ' —— 异常：结束时间已过，⏸ 图标仍在（疑似残留）' : '，结束后加跑一轮') + '［依据：' + pr.source + '］',
+            endAt: pr.endAt,
+            pauseInfo: { startText: pr.startText, endText: pr.endText, budget: pr.budget },
+            anomaly: stale ? 'pause-stale' : undefined,
+          }
+        } else if (pr.state === 'free') {
+          log('      刷新后确认没有控量任务（mode=' + pr.mode + '），按正常规则继续判定')
+          d = normalDecision()
+        } else {
+          d = { action: 'skip', anomaly: 'pause-unresolved', reason: '异常：列表显示控量中，但弹窗与日志都读不到、刷新后仍是如此（' + pr.reason + '），本轮轮空' }
+        }
+      } else if (mode === 'unknown' || mode === 'norow') {
+        d = { action: 'skip', anomaly: 'no-speed-group', reason: '异常：刷新后仍找不到「一键调速」组（可能改版），无法判断能否控量，本轮轮空' }
+      } else {
+        d = normalDecision()
+      }
+    }
+    else d = normalDecision()
 
     const rec = {
       target: target.id, aweme: target.awemeName, uid: target.awemeUniqueId || target.awemeName,
@@ -335,6 +329,94 @@ async function verifyLog(page, acct, o) {
   const want = new Date(o.submittedAt).getTime()
   const checks = { budget: nBudget === Number(o.budget), hours: nHours === Number(o.hours), time: at != null && Math.abs(at - want) <= 120000, deltaSec: at != null ? Math.round((at - want) / 1000) : null, logBudget: nBudget, logHours: nHours, logAt: row.content.slice(0, 120) }
   return { ms: Date.now() - t0, verified: checks.budget && checks.hours && checks.time, checks, row, rows: rows.slice(0, 3), detail: JSON.parse(head) }
+}
+
+// ---------- 刷新列表（唯一入口：强制忽略缓存 + 等新文档 + 等图标就绪） ----------
+async function refreshList(page, acct) {
+  const wantPath = new URL(listUrl(acct)).pathname
+  if (new URL(page.url).pathname !== wantPath) {
+    await page.send('Page.navigate', { url: listUrl(acct) }).catch(() => {})
+    await sleep(600)
+  }
+  let origin0 = null
+  try { origin0 = String(await page.eval('performance.timeOrigin')) } catch (e) {}
+  await page.send('Page.reload', { ignoreCache: true }, 20000).catch(() => {})
+  // 等真正的重新加载：timeOrigin 变了才算新文档，否则会读到刷新前的旧 DOM（或空 DOM）
+  await pollEval(page, 'performance.timeOrigin', (v) => v && String(v) !== origin0, 12000, 200)
+  await sleep(300)
+  const wantLayout = acct.entry === 'square' ? 'square' : 'uni-prom'
+  return !!(await pollEval(page, expr('row-state.js'), (s) => {
+    try {
+      const v = JSON.parse(s)
+      if (!v || !v.hasAwemeCol || !v.iconsReady) return false
+      if (v.layout !== wantLayout) return false
+      if (new URL(page.url).pathname !== wantPath) return false
+      return (v.rows || []).some((r) => r.aweme && String(r.aweme).trim().length > 1)
+    } catch (e) { return false }
+  }, 15000, 350))
+}
+
+function rowMatch(rows, target) {
+  return (rows || []).find((r) => (target.awemeUniqueId && r.aweme === target.awemeUniqueId) || r.aweme === target.awemeName || (target.awemeName && r.aweme.includes(target.awemeName.slice(0, 4)))) || null
+}
+
+async function readRowOf(page, target) {
+  try { return rowMatch(JSON.parse(await page.eval(expr('row-state.js'))).rows, target) } catch (e) { return null }
+}
+
+// 日志闭环：读详情页「日志」里最近一条「一键控量」，用它反推这次控量是否还在有效期内。
+// 弹窗读不到时靠它判断，而不是直接报异常。
+async function readRecentControl(page, acct, adId) {
+  if (!adId) return { ok: false, err: 'no-adId' }
+  try {
+    await page.send('Page.navigate', { url: detailUrl(acct.aavid, adId) })
+    const raw = await pollEval(page, expr('plan-log.js'), (v) => { try { return (JSON.parse(v).rows || []).length > 0 } catch (e) { return false } }, 12000)
+    await page.send('Page.navigate', { url: listUrl(acct) }).catch(() => {})
+    if (!raw) return { ok: false, err: 'no-log-rows' }
+    const rows = JSON.parse(raw).rows || []
+    const row = rows.find((r) => /新建/.test(r.type) && /一键控量/.test(r.content))
+    if (!row) return { ok: false, err: 'no-control-log' }
+    const startAt = parseLogTime(row.content)
+    const nHours = Number((row.content.match(/控量时长[：:]\s*([\d.]+)/) || [])[1])
+    const nBudget = Number((row.content.match(/控量预算[：:]\s*([\d.]+)/) || [])[1])
+    if (!startAt || !nHours) return { ok: false, err: 'cannot-parse-log', text: row.content.slice(0, 120) }
+    return { ok: true, startAt, endAt: startAt + nHours * 3600000, budget: nBudget || null, text: row.content.slice(0, 120) }
+  } catch (e) { return { ok: false, err: e.message } }
+}
+
+// 行上显示 ⏸ 时的闭环排查（用户规则）：
+//   点开弹窗读控量时间 → 读不到就去日志核对 → 逻辑不闭环就刷新界面再读 →
+//   仍显示控量中且日志里确有未结束的任务 → 按控量中处理（结束时间来自日志）；
+//   刷新后没有 ⏸ → 说明刚才看错/图标残留，按正常规则继续判定；
+//   3 分钟都查不清才报异常。
+async function resolvePause(page, acct, target, adId) {
+  const t0 = Date.now()
+  const tried = []
+  const fmt = (ms) => new Date(ms).toLocaleString('zh-CN')
+  const grab = async (tag) => {
+    const pi = await readPauseInfo(page, target.awemeName)
+    if (pi && pi.ok && pi.endAt) return { state: 'controlling', startText: pi.startText, endText: pi.endText, endAt: pi.endAt, budget: pi.budget, source: '弹窗/' + tag }
+    tried.push('弹窗(' + tag + '):' + ((pi && pi.reason) || 'unknown'))
+    const lg = await readRecentControl(page, acct, adId)
+    if (lg && lg.ok && lg.endAt > Date.now()) {
+      return { state: 'controlling', startAt: lg.startAt, endAt: lg.endAt, startText: fmt(lg.startAt), endText: fmt(lg.endAt), budget: lg.budget, source: '日志/' + tag }
+    }
+    tried.push('日志(' + tag + '):' + (lg && lg.ok ? '最近一条已结束 ' + fmt(lg.endAt) : ((lg && lg.err) || 'none')))
+    return null
+  }
+  let r = await grab('首次')
+  if (r) return r
+  while (Date.now() - t0 < 170000) {
+    log('      排查中：刷新列表后重读（已用 ' + Math.round((Date.now() - t0) / 1000) + 's）…')
+    await refreshList(page, acct)
+    const row = await readRowOf(page, target)
+    if (!row) { tried.push('刷新:没找到该行'); break }
+    if (row.mode !== 'pause') return { state: 'free', mode: row.mode, via: 'refresh' }
+    r = await grab('刷新后')
+    if (r) return r
+    await sleep(2500)
+  }
+  return { state: 'unknown', reason: tried.join(' / '), tried }
 }
 
 // ---------- 执行阶段 ----------

@@ -7,7 +7,11 @@
     const gs = [...td.querySelectorAll('.interfere-tool-wrapper,[class*="assistTask"],[class*="assist-task"]')]
     const byText = gs.find((g) => /一键调速/.test(c(g.innerText)))
     if (byText) return byText
-    return gs.find((g) => g.querySelector('iconpark-icon')) || null
+    // 绝不退回「第一个含图标的组」：素材/人群追投组里也有 iconpark-icon（含 ⏸），
+    // 退回去会把「素材追投暂停」当成「控量中」，点它还弹不出控量弹窗（2026-11-20 11:15 事故根因）
+    const byCls = td.querySelector('.interfere-tool-wrapper')
+    if (byCls && !/素材|人群|搜索/.test(c(byCls.innerText))) return byCls
+    return null
   }
   const all = [...document.querySelectorAll('tbody tr')].filter((t) => t.querySelectorAll('td').length >= 7)
   let heads = [...document.querySelectorAll('th')].map((t) => c(t.innerText))
