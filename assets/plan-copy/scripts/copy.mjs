@@ -203,6 +203,16 @@ async function cmdConfirm() {
   const ts = Date.now(), token = tokenFor(planId, ts, shot);
   fs.mkdirSync(path.dirname(receiptPath(planId)), { recursive: true });
   fs.writeFileSync(receiptPath(planId), JSON.stringify({ planId, aavid, ts, shot, token, rowText: row }, null, 1));
+  // 同步下发到 QQ / 企业微信（失败不影响出图与确认单）
+  try {
+    const { pushImage } = await import('./notify-media.mjs');
+    const text = '【删除前确认】' + String.fromCharCode(10)
+      + '名称：' + String(row).split('ID：')[0].trim().slice(0, 40) + String.fromCharCode(10)
+      + 'ID：' + planId;
+    console.log('PUSH-TEXT ' + text.split(String.fromCharCode(10)).join(' / '));
+    const pushed = await pushImage({ file: shot, text, say: (s) => console.log(s) });
+    console.log('PUSH ' + JSON.stringify(pushed.map((x) => ({ ch: x.ch, part: x.part, ok: x.ok }))));
+  } catch (e) { console.log('PUSH-ERR ' + String(e.message).slice(0, 140)); }
   mark('confirm-shot', shot);
   console.log('ROW ' + row);
   console.log('SHOT ' + shot);

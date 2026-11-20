@@ -1,16 +1,10 @@
 # 更新日志
 
-## 1.0.6
+## 1.0.7
 
-- `copy.mjs` 新增「没截图=不让删」硬闸门：`confirm` 先按计划 ID 搜到唯一一条、截列表图 `qc/confirm-<ID>.png` 并写确认单（TOKEN，30 分钟有效）；`delete` 没有有效确认单 / TOKEN 不符 / 截图丢失一律拒绝，只有 `--force` 可跳过。
-- 列表搜索改合成回车（`KeyboardEvent`，`keyCode 13`）：CDP `Input.dispatchKeyEvent` 在千川列表里不触发搜索，会一直停在「共 N 条计划」；新增 `HIT_ONE` 行判定（含 `ID：` 的行恰好 1 行且包含该 ID）替代正则，避开多层字符串吃反斜杠。
-- 导航后 SPA 默认停在「全店托管」，新增 `ensurePlanList()`：先点「计划视图」再点「商品自选」，才等到搜索框；搜索失败会 dump 可见文字后重试一次。
-- 创建链路修三处：①`focusAndType` 里 `Input.insertText` 的 `text` 必须是字符串（ROI/预算传数字报 `Failed to deserialize params.text`）；②商品抽屉默认勾着「只看可投商品」，搜 ID 得 0 行，改为自动取消勾选并最多搜三次（含回车）；③抖音号步骤先等「手动选择抖音号」再点，行内勾选正则转义修正。
-- 素材链路改走**列表页详情抽屉**（用户指定路径）：点行内计划名叶子打开抽屉 → 抽屉内「素材」tab → 「自选素材」→ 素材类型「视频」→「添加视频」→ 逐抖音号全选 → 一次确定。素材 tab 默认停在 AIGC，不先点「视频」就没有「添加视频」按钮。
-- `pick-all.mjs` 模块化导出 `pickAllOnTarget`：切号后轮询最多 8s 取卡片；点完读「已选择 N/200」，没涨就补点一次；某号 0 卡片先取消「过滤不良素材」再等 12s，仍为空才跳过并记录；最后统一提交，逐号输出 `{cards,before,after,delta,retried,note}`。单号模式修掉 `~/.qianchuan-cruise/out` 不存在导致的 `ENOENT`。
-- `cdp-lib.mjs`：`connect()` 返回值补 `id`（素材步骤需绑定当前驱动的标签页）；`eval` 抛错附带表达式前 240 字符。
-- 新增 `node copy.mjs all <aavid> <params.json>`：confirm → 人工确认 → delete → create → materials → publish 一条龙，确认单为硬闸门。
-- 看门狗 `QC_WATCHDOG`（默认 150s）与秒级打点：进程不再因 CDP 长连接挂住不退出。
+- **计划复制**：`copy.mjs` 增加**删除前确认单**（`confirm` 子命令 + 令牌校验），没有确认单 `delete` 拒绝执行；新增 `notify-media.mjs`，删除前截图自动推 **QQ 官方机器人 + 企业微信**（三行格式：`【删除前确认】` + 名称 + ID）；`pick-all.mjs` 改为按抖音号轮询、取消失败重试，修掉「卡片已渲染但已选为 0」的漏选。
+- **CDP 层**：`cdp-lib.mjs` 的 `page` 带 `id`，报错时附带页面标题/URL 上下文，多标签页排查不再靠猜。
+- 巡航部分（`live-control`）与 1.0.5 逐字节一致，本次未改动。
 
 ## 1.0.5
 

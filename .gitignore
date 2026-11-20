@@ -3,7 +3,3 @@ node_modules/
 .DS_Store
 .qianchuan-cruise/
 qc-live/
-
-*.bak
-*.bak-*
-qc/
