@@ -134,11 +134,12 @@ export async function connect(match = 'jinritemai', { autoDialog = true, id = nu
   return {
     url: page.url,
     title: page.title,
+    id: page.id,
     dialogs,
     send: rawSend,
     async eval(expr, timeoutMs = EVAL_TIMEOUT) {
       const r = await rawSend('Runtime.evaluate', { expression: expr, returnByValue: true, awaitPromise: true, userGesture: true }, timeoutMs)
-      if (r.exceptionDetails) throw new CdpError('eval 异常: ' + r.exceptionDetails.text + ' ' + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || ''))
+      if (r.exceptionDetails) throw new CdpError('eval 异常: ' + r.exceptionDetails.text + ' ' + ((r.exceptionDetails.exception && r.exceptionDetails.exception.description) || '') + ' ||EXPR|| ' + String(expr).slice(0, 240))
       return r.result ? r.result.value : undefined
     },
     async evalJson(expr, timeoutMs = EVAL_TIMEOUT) {
