@@ -10,15 +10,25 @@
   const groupsOf = (td) => [...(td ? td.querySelectorAll('[class*="assistTask"],[class*="assist-task"]') : [])]
   const labelOf = (g) => c((g.querySelector('[class*="taskLabel"],.title') || g).innerText).slice(0, 20)
   const DISABLED = /icon-not-allowed|actionIconDisabled/
+  // 「一键调速」组类名不稳定（.interfere-tool-wrapper / .assist-task / .assistTask-*），按组内文案定位
+  const speedGroup = (td) => {
+    if (!td) return null
+    const gs = [...td.querySelectorAll('.interfere-tool-wrapper,[class*="assistTask"],[class*="assist-task"]')]
+    const byText = gs.find((g) => /一键调速/.test(c(g.innerText)))
+    if (byText) return byText
+    return gs.find((g) => g.querySelector('iconpark-icon')) || null
+  }
   const want = '{{AWEME}}'
   const hits = dataRows.filter((t) => { const td = t.querySelectorAll('td'); return td[iAweme] && c(td[iAweme].innerText).includes(want) })
   if (!hits.length) return JSON.stringify({ err: 'NO_ROW' })
   if (hits.length > 1) return JSON.stringify({ err: 'MULTI_ROW', n: hits.length })
   const tds = hits[0].querySelectorAll('td')
   const status = c(tds[iStatus].innerText)
-  const groups = groupsOf(tds[iTool])
-  const g0 = groups.find((g) => labelOf(g).startsWith('一键调速')) || groups[0]
+  const toolCell = tds[iTool]
+  // 必须取「一键调速」那一组，否则会落到「素材/人群追投」组去点加号，弹出的是另一套弹窗。
+  const g0 = speedGroup(toolCell)
   const plus = g0 ? g0.querySelector('iconpark-icon[name="oc-icon-plus"]') : null
+  const pauseIcon = g0 ? g0.querySelector('iconpark-icon[name="iconPauseFilled"]') : null
   const box = g0 ? g0.getBoundingClientRect() : null
   return JSON.stringify({
     ok: true,
@@ -27,8 +37,9 @@
     live: /投放中/.test(status) && !/未开播/.test(status),
     hasPlus: !!plus,
     plusDisabled: !!(plus && DISABLED.test(plus.className || '')),
-    hasPause: !!tds[iTool].querySelector('iconpark-icon[name="iconPauseFilled"]'),
+    hasPause: !!pauseIcon,
+    mode: pauseIcon ? 'pause' : plus ? 'plus' : 'none',
     group: box ? { x: Math.round(box.x), y: Math.round(box.y), w: Math.round(box.width), h: Math.round(box.height) } : null,
-    groups: groups.map(labelOf),
+    groups: groupsOf(toolCell).map(labelOf),
   })
 })()

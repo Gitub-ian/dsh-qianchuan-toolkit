@@ -10,12 +10,23 @@
   const groupsOf = (td) => [...(td ? td.querySelectorAll('[class*="assistTask"],[class*="assist-task"]') : [])]
   const labelOf = (g) => c((g.querySelector('[class*="taskLabel"],.title') || g).innerText).slice(0, 20)
   const DISABLED = /icon-not-allowed|actionIconDisabled/
+  // 「一键调速」组类名不稳定（.interfere-tool-wrapper / .assist-task / .assistTask-*），按组内文案定位
+  const speedGroup = (td) => {
+    if (!td) return null
+    const gs = [...td.querySelectorAll('.interfere-tool-wrapper,[class*="assistTask"],[class*="assist-task"]')]
+    const byText = gs.find((g) => /一键调速/.test(c(g.innerText)))
+    if (byText) return byText
+    return gs.find((g) => g.querySelector('iconpark-icon')) || null
+  }
   const want = '{{AWEME}}'
   const hit = dataRows.filter((t) => { const td = t.querySelectorAll('td'); return td[iAweme] && c(td[iAweme].innerText).includes(want) })[0]
   if (!hit) return 'NO_ROW'
-  const groups = groupsOf(hit.querySelectorAll('td')[iTool])
-  const g0 = groups.find((g) => labelOf(g).startsWith('一键调速')) || groups[0]
-  const plus = g0 && g0.querySelector('iconpark-icon[name="oc-icon-plus"]')
+  const toolCell = hit.querySelectorAll('td')[iTool]
+  // 只点「一键调速」组里的加号，别落到「素材/人群追投」组
+  const g0 = speedGroup(toolCell)
+  if (!g0) return 'NO_SPEED_GROUP'
+  const plus = g0.querySelector('iconpark-icon[name="oc-icon-plus"]')
+  if (g0.querySelector('iconpark-icon[name="iconPauseFilled"]')) return 'PAUSE_RUNNING'
   if (!plus) return 'NO_PLUS'
   if (DISABLED.test(plus.className || '')) return 'PLUS_DISABLED'
   plus.click()

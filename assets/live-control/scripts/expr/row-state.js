@@ -13,19 +13,42 @@
   const dataRows = all.filter(isData)
   const groupsOf = (td) => [...(td ? td.querySelectorAll('[class*="assistTask"],[class*="assist-task"]') : [])]
   const labelOf = (g) => c((g.querySelector('[class*="taskLabel"],.title') || g).innerText).slice(0, 20)
+  // 「一键调速」组的类名在不同状态下会变（.interfere-tool-wrapper / .assist-task / .assistTask-*），
+  // 所以按组内文案「一键调速」定位，最后才退回「第一个含图标的组」。
+  //   组里只有 oc-icon-plus(+) → 此刻没有控量任务，可以创建；
+  //   组里是 iconPauseFilled(⏸) → 正在控量，点它会弹「确定要停止控量吗？控量时间 起 ~ 止」。
+  const speedGroup = (td) => {
+    if (!td) return null
+    const gs = [...td.querySelectorAll('.interfere-tool-wrapper,[class*="assistTask"],[class*="assist-task"]')]
+    const byText = gs.find((g) => /一键调速/.test(c(g.innerText)))
+    if (byText) return byText
+    return gs.find((g) => g.querySelector('iconpark-icon')) || null
+  }
   const rows = dataRows.map((t) => {
     const td = t.querySelectorAll('td')
     const toolCell = td[iTool]
     const icons = [...(toolCell ? toolCell.querySelectorAll('iconpark-icon') : [])]
     const names = icons.map((i) => i.getAttribute('name') || '')
+    const sp = speedGroup(toolCell)
+    const spIcons = sp ? [...sp.querySelectorAll('iconpark-icon')] : []
+    const spNames = spIcons.map((i) => i.getAttribute('name') || '')
+    const pauseIcon = spIcons.find((i) => i.getAttribute('name') === 'iconPauseFilled') || null
+    const plusIcon = spIcons.find((i) => i.getAttribute('name') === 'oc-icon-plus') || null
+    const hasPause = !!pauseIcon
+    const hasPlus = !!plusIcon
+    const plusDisabled = !!(plusIcon && /icon-not-allowed|actionIconDisabled/.test(plusIcon.className || ''))
     const text = c(t.innerText)
     return {
       aweme: c(td[iAweme] && td[iAweme].innerText).slice(0, 26),
       status: c(td[iStatus] && td[iStatus].innerText).slice(0, 26),
       // 「已暂停」行常附带「有效投放中」这类诊断字样，必须用否定词兜住，否则会把暂停行当成在投
       live: (() => { const s = c(td[iStatus] && td[iStatus].innerText); return /投放中/.test(s) && !/已暂停|未开播|审核中|预算不足|已结束/.test(s) })(),
-      hasPause: names.includes('iconPauseFilled'),
-      hasPlus: names.includes('oc-icon-plus'),
+      hasPause,
+      hasPlus,
+      plusDisabled,
+      speedIcons: spNames,
+      // unknown = 连「一键调速」组都找不到（页面改版/未加载完），是异常，绝不能当「控量中」
+      mode: !sp ? 'unknown' : hasPause ? 'pause' : hasPlus ? 'plus' : 'none',
       tools: groupsOf(toolCell).map(labelOf),
       budget: (text.match(/每日预算\s*([\d.,]+)\s*元/) || [])[1] || null,
       roiTarget: (text.match(/(?:ROI目标|综合营销ROI目标)\s*([\d.]+)/) || [])[1] || null,

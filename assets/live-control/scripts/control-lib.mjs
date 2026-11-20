@@ -104,16 +104,59 @@ export async function runControl(page, o = {}) {
   if (dryRun) return { ...res, code: 0, ok: true, stage: 'dryrun' }
 
   res.stage = 'submit'
-  const sr = JSON.parse((await page.eval(expr('submit-rect.js'))) || 'null')
-  if (!sr) return { ...res, code: 3, stage: 'submit', err: 'no submit button' }
-  await page.clickAt(sr.x, sr.y)
+  // ① 等「提交」按钮稳定：平台在选定「一键控量」后会重新排版（弹窗变高、按钮下移 50+px），
+  //    只测一次坐标必然点空——这是 2026-11-20 09:45 提交失败的事故原因。
+  const stableRect = async () => {
+    let prev = null
+    for (let k = 0; k < 12; k++) {
+      const cur = JSON.parse((await page.eval(expr('submit-rect.js'))) || 'null')
+      if (cur && prev && cur.x === prev.x && cur.y === prev.y) return cur
+      prev = cur
+      await sleep(350)
+    }
+    return prev
+  }
+  const rowMode = async () => { try { return JSON.parse(await page.eval(expr('row-mode.js', { '{{AWEME}}': aweme }))).mode } catch (e) { return 'unknown' } }
+  // ② 优先 DOM 点击（不依赖坐标），拿不到再按稳定坐标真实鼠标点击
+  const clickSubmit = async (tag) => {
+    const dom = JSON.parse((await page.eval(expr('submit-dom.js'))) || '{}')
+    if (dom.ok) { say('提交[' + tag + '] DOM 点击 @' + dom.x + ',' + dom.y); return { how: 'dom', ...dom } }
+    if (dom.reason === 'BTN_DISABLED') return { how: 'none', err: 'submit disabled' }
+    const sr2 = await stableRect()
+    if (!sr2) return { how: 'none', err: 'no submit button (' + (dom.reason || 'null') + ')' }
+    await page.clickAt(sr2.x, sr2.y)
+    say('提交[' + tag + '] 鼠标点击 @' + sr2.x + ',' + sr2.y)
+    return { how: 'mouse', ...sr2 }
+  }
+  // ③ 多信号确认：弹窗消失 / toast 成功 / 行变 ⏸（平台生效有延迟，最多等 8s）
+  const confirmSubmit = async (msMax) => {
+    const t0 = Date.now()
+    let last = {}
+    while (Date.now() - t0 < msMax) {
+      await sleep(400)
+      const r0 = JSON.parse(await page.eval(expr('result.js')))
+      const mode = await rowMode()
+      last = { toast: r0.toast, dialogGone: !!r0.dialogGone, mode, ms: Date.now() - t0 }
+      if (last.dialogGone || (r0.toast || []).some((t) => /成功|已提交|设置/.test(t)) || mode === 'pause') return { ok: true, ...last }
+    }
+    return { ok: false, ...last }
+  }
+  const first = await clickSubmit('第1次')
   res.submittedAt = new Date().toISOString()
-  res.clickedAt = sr
-  await sleep(3000)
-  const r = JSON.parse(await page.eval(expr('result.js')))
-  res.toast = r.toast
-  res.dialogGone = !!r.dialogGone
-  const good = res.dialogGone || (r.toast || []).some((t) => /成功|已提交|设置/.test(t))
+  res.clickedAt = first
+  let v = await confirmSubmit(8000)
+  // ④ 仍没成功且行还是「+」→ 重试 1 次；点前再确认一次没有 ⏸，绝不做重复提交
+  if (!v.ok && first.how !== 'none') {
+    if ((await rowMode()) === 'pause') v = { ok: true, mode: 'pause', note: '重试前发现已在控量' }
+    else {
+      const again = await clickSubmit('重试')
+      res.retried = again
+      if (again.how !== 'none') { await sleep(500); v = await confirmSubmit(8000) }
+    }
+  }
+  res.toast = v.toast
+  res.dialogGone = !!v.dialogGone
+  res.rowMode = v.mode
   await shot(page, shots, 'control-done.png')
-  return { ...res, code: good ? 0 : 1, ok: good, stage: good ? 'done' : 'unknown' }
+  return { ...res, code: v.ok ? 0 : 1, ok: !!v.ok, stage: v.ok ? 'done' : 'unknown', verify: v }
 }
