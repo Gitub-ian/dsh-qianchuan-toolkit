@@ -755,6 +755,8 @@ try {
         log('整点播报：等到 ' + new Date(due).toLocaleString('zh-CN'))
         await sleep(Math.max(0, due - Date.now()))
         await flushDueDigests()
+        // 播报发完后把心跳改回「下一轮」时间，避免看门狗把这次醒来误判成卡死
+        if (next) writeHeartbeat({ round: i, ms: Date.now() - roundStart, nextAt: next, nextRound: next })
       }
     }
     if (last) break

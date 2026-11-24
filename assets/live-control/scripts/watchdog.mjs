@@ -106,7 +106,8 @@ async function check() {
     // 只有「已经过了它自己说的下一轮时间 + 宽限」才算卡死。
     const hbMs = new Date(hb.ts).getTime()
     const age = now - hbMs
-    const dueAt = Number(hb.nextAt || 0) || Number(hb.nextRound || 0) || 0
+    // 优先用 nextRound（真正的下一轮）；nextAt 可能只是「醒来发整点播报」的时刻，会正常过期
+    const dueAt = Number(hb.nextRound || 0) || Number(hb.nextAt || 0) || 0
     const overdue = dueAt ? now > dueAt + GRACE_MS : age > STALE_MS
     if (overdue) issues.push({ kind: 'heartbeat-stale', msg: (dueAt ? '已过下一轮时间 ' + Math.round((now - dueAt) / 60000) + ' 分钟仍未出现新心跳' : '心跳停止 ' + Math.round(age / 60000) + ' 分钟') + '（最后 ' + new Date(hb.ts).toLocaleString('zh-CN') + '，第 ' + (hb.round || '?') + ' 轮' + (dueAt ? '，应于 ' + new Date(dueAt).toLocaleString('zh-CN') + ' 有新心跳' : '') + '）' })
   }
