@@ -13,9 +13,11 @@ import { spawn } from 'node:child_process'
 import path from 'node:path'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
+import { notify } from './notify.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const HOURLY = process.env.QC_HOURLY || path.join(here, 'hourly.mjs')
+const WATCHDOG = process.env.QC_WATCHDOG || path.join(here, 'watchdog.mjs')
 if (!fs.existsSync(HOURLY)) { console.error('找不到 hourly.mjs：' + HOURLY + '（可用 QC_HOURLY 指定）'); process.exit(2) }
 const HOME = process.env.QC_HOME || path.join(here, '..', 'prod')
 const argv = process.argv.slice(2)
@@ -60,6 +62,41 @@ function nextWindow(now = Date.now()) {
 
 function fmt(ms) { return new Date(ms).toLocaleString('zh-CN') }
 
+// ---- 看门狗：独立进程，自己盯着心跳/进程/CDP；本进程负责拉起它，并每 2 分钟确认它还活着 ----
+function watchdogAlive() {
+  try {
+    const n = Number(String(fs.readFileSync(path.join(HOME, 'watchdog.pid'), 'utf8')).trim())
+    if (!n) return false
+    process.kill(n, 0)
+    return true
+  } catch (e) { return e.code === 'EPERM' }
+}
+function ensureWatchdog() {
+  if (!fs.existsSync(WATCHDOG)) return
+  if (watchdogAlive()) return
+  try {
+    const out = fs.openSync(path.join(HOME, 'watchdog.out.log'), 'a')
+    const c = spawn(process.execPath, [WATCHDOG, '--start', START, '--end', END], { stdio: ['ignore', out, out], env: { ...process.env, QC_HOME: HOME }, windowsHide: true })
+    log('看门狗已拉起 pid ' + c.pid)
+    c.on('exit', (code) => log('看门狗退出（退出码 ' + code + '），2 分钟后会重新拉起'))
+  } catch (e) { log('拉起看门狗失败：' + e.message) }
+}
+
+// ---- 每个窗口只推一次「已开工」 ----
+const WINDOW_STATE = path.join(HOME, '.window-notified.json')
+async function notifyWindowStart(w) {
+  let last = 0
+  try { last = Number(JSON.parse(fs.readFileSync(WINDOW_STATE, 'utf8')).start) || 0 } catch (e) {}
+  if (last === w.start) return
+  try { fs.mkdirSync(HOME, { recursive: true }); fs.writeFileSync(WINDOW_STATE, JSON.stringify({ start: w.start })) } catch (e) {}
+  const text = [
+    '窗口：' + fmt(w.start) + ' ~ ' + fmt(w.end),
+    '从现在起正常轮次不再打扰你；每个整点推一条「X点播报」，01:00 推收工日报。',
+    '整点没有播报 = 巡航掉线，看门狗会同时告警。',
+  ].join(String.fromCharCode(10))
+  await notify({ dir: HOME, title: '千川巡航：已开工', text, level: 'info', event: 'start', say: (s) => log('    notify: ' + s) }).catch(() => {})
+}
+
 async function runOnce() {
   const args = ['--watch', '--max-rounds', '1000', '--until', END]
   log('启动巡航：hourly.mjs ' + args.join(' '))
@@ -81,6 +118,8 @@ if (PLAN_ONLY) {
 try { fs.writeFileSync(path.join(HOME, 'supervisor.pid'), String(process.pid)) } catch { /* 忽略 */ }
 process.on('exit', () => { try { if (String(fs.readFileSync(path.join(HOME, 'supervisor.pid'), 'utf8')).trim() === String(process.pid)) fs.unlinkSync(path.join(HOME, 'supervisor.pid')) } catch { /* 忽略 */ } })
 log('守夜进程启动：每天 ' + START + ' 开始，次日 ' + END + ' 收工（数据目录 ' + HOME + '）')
+ensureWatchdog()
+setInterval(() => { try { ensureWatchdog() } catch (e) { /* 忽略 */ } }, 120000)
 for (;;) {
   const w = nextWindow()
   if (!w.inWindow) {
@@ -89,6 +128,8 @@ for (;;) {
     continue
   }
   log('现在在窗口内（' + fmt(w.start) + ' ~ ' + fmt(w.end) + '），开始巡航')
+  ensureWatchdog()
+  await notifyWindowStart(w).catch(() => {})
   const code = await runOnce()
   const still = nextWindow()
   if (!still.inWindow) continue          // 已到收工点：回到循环顶部睡到下一个开始时间

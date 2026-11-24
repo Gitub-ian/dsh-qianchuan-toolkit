@@ -31,6 +31,7 @@ const STAGE_MS = Number(arg('stage-timeout', '90')) * 1000
 const ROUND_MS = Number(arg('round-timeout', '420')) * 1000
 const SHOTS = arg('shots', paths().home)
 const REPORT_ALL = has('report-all')            // 每轮都把结果推给通知通道（默认只报异常）
+const DIGEST = !has('no-digest')                 // 整点播报：每个整点推一次上一小时摘要（--no-digest 关闭）
 const UNTIL = arg('until', '')                  // 例：--until 01:00 跑到次日 01:00 自动收工
 function deadlineOf(hhmm) {
   const m = String(hhmm).match(/^(\d{1,2}):(\d{2})$/)
@@ -546,6 +547,72 @@ async function executeAccount(group, rec) {
   }
 }
 
+
+// ---------- 心跳 + 整点播报 ----------
+// 心跳：每轮写入 heartbeat.json，看门狗据 nextAt 判断是否卡死
+const HB_FILE = path.join(P.home, 'heartbeat.json')
+function writeHeartbeat(o) {
+  try { fs.mkdirSync(P.home, { recursive: true }); fs.writeFileSync(HB_FILE, JSON.stringify({ ts: new Date().toISOString(), pid: process.pid, ...o })) } catch (e) { /* 心跳失败不影响巡航 */ }
+}
+function hourStartOf(t = Date.now()) { const d = new Date(t); d.setMinutes(0, 0, 0); return d.getTime() }
+const DIGEST_STATE = path.join(P.home, '.digest-state.json')
+function loadDigestLast() { try { const n = Number(JSON.parse(fs.readFileSync(DIGEST_STATE, 'utf8')).lastAt); if (n > 0) return n } catch (e) {} return 0 }
+function saveDigestLast(n) { try { fs.mkdirSync(P.home, { recursive: true }); fs.writeFileSync(DIGEST_STATE, JSON.stringify({ lastAt: n })) } catch (e) {} }
+let DIGEST_LAST = WATCH && DIGEST ? (loadDigestLast() || hourStartOf()) : 0
+function readJsonlFile(f) {
+  try { return fs.readFileSync(f, 'utf8').trim().split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l) } catch (e) { return null } }).filter(Boolean) } catch (e) { return [] }
+}
+const tms = (s) => new Date(s).getTime()
+const hm2 = (t) => new Date(t).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false })
+
+// 整点播报：把上一个整点小时的巡航日志压成一条，用户看「整点有没有消息」就知道是否还在跑
+function digestInfo(hs) {
+  const he = hs + 3600000
+  const rounds = readJsonlFile(P.rounds).filter((r) => { const t = tms(r.ts); return t >= hs && t < he })
+  const acts = readJsonlFile(P.actions).filter((a) => { const t = tms(a.ts); return t >= hs && t < he })
+  const hh = new Date(hs).getHours()
+  const head = '千川巡航 · ' + hh + '点播报'
+  if (!rounds.length) {
+    return { title: '⚠️' + head, level: 'warn', text: ['本小时 0 轮：没有收到任何巡航记录。', '如果不是你手动停的，请检查巡航是否还在跑。'].join('\n') }
+  }
+  const decisions = []
+  let anomalies = 0
+  for (const r of rounds) {
+    for (const a of r.accounts || []) {
+      anomalies += (a.anomalies || []).length
+      for (const d of a.decisions || []) decisions.push({ t: tms(r.ts), d })
+    }
+  }
+  const lines = ['轮次 ' + rounds.length + ' 次（' + rounds.map((r) => hm2(tms(r.ts))).join(' / ') + '）']
+  if (decisions.length) {
+    const lastOne = decisions[decisions.length - 1]
+    const d = lastOne.d
+    let tail = d.decision.action
+    if (d.decision.action === 'control') tail = 'control：应控 ' + (d.decision.budget || '?') + ' 元'
+    else if (d.decision.reason) tail += '：' + d.decision.reason
+    lines.push('最后 ' + hm2(lastOne.t) + '：消耗 ' + d.cost + ' / 净成交 ' + d.gmv + ' / ROI ' + d.roi + ' → ' + tail)
+  }
+  if (acts.length) {
+    const okN = acts.filter((a) => a.ok).length
+    lines.push('控量 ' + acts.length + ' 次（成功 ' + okN + ' / 失败 ' + (acts.length - okN) + '）：' + acts.map((a) => hm2(tms(a.ts)) + (a.ok ? ' ✅' : ' ❌')).join('、'))
+  }
+  lines.push('异常 ' + anomalies + ' 条')
+  return { title: (anomalies ? '⚠️' : '') + head, text: lines.join('\n'), level: anomalies ? 'warn' : 'info' }
+}
+async function pushDigest(hs) {
+  const d = digestInfo(hs)
+  await notify({ dir: P.home, title: d.title, text: d.text, level: d.level, event: 'digest', say: (s) => log('    notify: ' + s) }).catch(() => {})
+  log('已推送 ' + d.title)
+}
+async function flushDueDigests() {
+  if (!(WATCH && DIGEST)) return
+  while (DIGEST_LAST + 3605000 <= Date.now()) {
+    await pushDigest(DIGEST_LAST)
+    DIGEST_LAST += 3600000
+    saveDigestLast(DIGEST_LAST)
+  }
+}
+
 // ---------- 每轮结果推送（--report-all 时，不论正常还是异常都发） ----------
 async function reportRound(i, recs, nextAt) {
   const lines = []
@@ -596,6 +663,13 @@ function nextSlot(nodes, extraAt = [], lastStart = 0) {
 }
 
 // ---- main ----
+if (has('digest-now')) {   // 调试用：只渲染上一个整点的播报内容；加 --no-send 不实际推送
+  const hs = hourStartOf(Date.now()) - 3600000
+  const d = digestInfo(hs)
+  console.log(d.title + String.fromCharCode(10) + d.text)
+  if (!has('no-send') && !DRY) await pushDigest(hs)
+  process.exit(0)
+}
 if (has('doctor')) {
   console.log('数据目录 ' + P.home)
   for (const g of groupByAccount(cfg)) for (const t of g.targets) {
@@ -628,6 +702,7 @@ if (START_AT_MS) {
   log('定时启动：等到 ' + new Date(START_AT_MS).toLocaleString('zh-CN') + ' 才开始巡航（约 ' + Math.round(ms / 60000) + ' 分钟后）')
   await sleep(ms)
 }
+writeHeartbeat({ round: 0, nextAt: Date.now() + 15 * 60000, phase: 'starting' })
 log('本轮 ' + groups.length + ' 个账号 / ' + groups.reduce((s, g) => s + g.targets.length, 0) + ' 个目标' + (DRY ? ' [dry-run]' : '') + (REPORT_ALL ? ' [每轮推送]' : '') + (DEADLINE ? ' [跑到 ' + new Date(DEADLINE).toLocaleString('zh-CN') + ']' : ''))
 if (REPORT_ALL && WATCH) {
   const r0 = resolveRule(cfg, groups[0].targets[0])
@@ -663,12 +738,25 @@ try {
     }
     for (const rec of recs) { delete rec._group }
     jl(P.rounds, { ts: new Date().toISOString(), round: i, ms: Date.now() - roundStart, accounts: recs })
+    writeHeartbeat({ round: i, ms: Date.now() - roundStart, nextAt: 0 })
     log('本轮耗时 ' + ((Date.now() - roundStart) / 1000).toFixed(1) + 's')
     const nodes = [...new Set(groups.flatMap((g) => g.targets.flatMap((t) => resolveRule(cfg, t).nodes)))].sort((a, b) => a - b)
     const last = i === MAX_ROUNDS
     const next = last ? 0 : nextSlot(nodes, extras, roundStart)
+    const digestDue = WATCH && DIGEST ? DIGEST_LAST + 3605000 : 0
+    const wakeAt = last ? digestDue : (digestDue && digestDue < next - 5000 ? digestDue : next)
+    writeHeartbeat({ round: i, ms: Date.now() - roundStart, nextAt: wakeAt || 0, nextRound: next || 0 })
     // 有异常时即使没开 --report-all 也要推，异常必须让人看到
     if (REPORT_ALL || recs.some((r) => (r.anomalies || []).length)) await reportRound(i, recs, next)
+    await flushDueDigests()
+    if (WATCH && DIGEST && !last) {
+      const due = DIGEST_LAST + 3605000
+      if (due < next - 5000) {
+        log('整点播报：等到 ' + new Date(due).toLocaleString('zh-CN'))
+        await sleep(Math.max(0, due - Date.now()))
+        await flushDueDigests()
+      }
+    }
     if (last) break
     if (DEADLINE && next > DEADLINE) {
       const remain = DEADLINE - Date.now()
@@ -680,7 +768,16 @@ try {
         continue
       }
       log('已到收工时间 ' + new Date(DEADLINE).toLocaleString('zh-CN') + '，巡航结束')
-      if (REPORT_ALL) await notify({ dir: P.home, title: '千川巡航：已收工', text: '本轮后到达停止时间 ' + new Date(DEADLINE).toLocaleString('zh-CN') + '，巡航结束。', level: 'info', event: 'stop', say: (s) => log('    notify: ' + s) }).catch(() => {})
+      await flushDueDigests()
+      if (WATCH) {
+        const since = Date.now() - 20 * 3600000
+        const rs = readJsonlFile(P.rounds).filter((r) => tms(r.ts) >= since)
+        const acts = readJsonlFile(P.actions).filter((a) => tms(a.ts) >= since)
+        const okN = acts.filter((a) => a.ok).length
+        const errN = readJsonlFile(P.errors).filter((e) => tms(e.ts) >= since).length
+        const text = ['收工时间：' + new Date(DEADLINE).toLocaleString('zh-CN'), '本次共 ' + rs.length + ' 轮，控量 ' + acts.length + ' 次（成功 ' + okN + ' / 失败 ' + (acts.length - okN) + '）', '异常记录 ' + errN + ' 条', '下一窗口：明天 07:00 自动开始（看门狗全程盯着）'].join(String.fromCharCode(10))
+        await notify({ dir: P.home, title: '千川巡航：收工日报', text, level: 'info', event: 'stop', say: (s) => log('    notify: ' + s) }).catch(() => {})
+      }
       break
     }
     const waitMs = Math.max(0, next - Date.now())
