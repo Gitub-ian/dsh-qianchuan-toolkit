@@ -1,5 +1,13 @@
 # 更新日志
 
+## 1.0.10
+
+- **计划复制·批量跑通**：新增 `assets/plan-copy/scripts/capture.mjs`（按 ID 搜索 → 详情页抓抖音号/素材/ROI/预算/商品 → 生成 `qc/params-<原ID>.json`）。抖音号解析只取在投行（过滤「已删除」「无抖音号（仅含商城流量）」与计划行），aweme ID 支持 `_`/`.` 字符，修掉漏号与误取商品 ID。
+- **发布后不再误判失败**：`copy.mjs` 的 `publish` 捕获 `Inspected target navigated or closed`（页面跳转导致 CDP target 失效），`all` 改为**重新导航列表并按首行计划名核验**新计划 ID，不再读旧标签页 DOM（旧页常残留搜索过滤后的空结果）。
+- **素材弹层落位修复**：`addMaterialsViaDrawer` 先轮询 ≤18s 等「添加视频」弹层从右侧滑入落位，只有真在视口外才关标签重开（`reopen-tab`）重试一次，避免误重开与首次 0 选。
+- `pick-all.mjs` 同步到最新版（同 itemid 多副本时只取 `elementFromPoint` 命中的坐标）。
+- 文档：`assets/plan-copy/SKILL.md` 增加 capture/copy/notify-media 脚本说明与「抓参数→确认→删除→重建」四步命令、自动化要点。
+
 ## 1.0.9
 
 - **巡航单实例锁（安全）**：`hourly.mjs --watch` 启动时写 `<QC_HOME>/watch.pid`，发现已有存活的巡航进程就直接退出（code 4）并提示，避免「开机自启的巡航」和「手动启动的巡航」同时提交造成重复控量。进程退出时自动清理锁文件；确认旧进程已死可手工删除该文件。

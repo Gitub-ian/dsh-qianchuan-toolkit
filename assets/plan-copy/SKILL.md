@@ -1,6 +1,6 @@
 # 千川乘方「复制计划」技能包
 
-> **资源位置**：本技能的资源基目录下有 `scripts/`（cdp.mjs、gen-batch11.mjs、pick-all.mjs、start-qc.cmd）与 `references/`（完整手册、界面结构、弹窗处理、浏览器会话）。下文出现的 `scripts/xxx.mjs` 都相对这个基目录；截图与记录可以写到任意工作目录，建议统一放一个 `qc/` 目录。
+> **资源位置**：本技能的资源基目录下有 `scripts/`（cdp.mjs、copy.mjs、capture.mjs、gen-batch11.mjs、pick-all.mjs、notify-media.mjs、start-qc.cmd）与 `references/`（完整手册、界面结构、弹窗处理、浏览器会话）。下文出现的 `scripts/xxx.mjs` 都相对这个基目录；截图与记录可以写到任意工作目录，建议统一放一个 `qc/` 目录。
 >
 > **运行环境**：Windows 或 macOS；Microsoft Edge / Google Chrome 任一（用 `--remote-debugging-port=9222` 开调试端口）；Node 18+，脚本零第三方依赖。**不要假设用户用的是哪个浏览器、哪个 profile、哪个千川账户**——1.1 和 1.2 会先探测再动手。
 
@@ -362,6 +362,9 @@ node scripts/pick-all.mjs "抖音号名1,抖音号名2,...,抖音号名N"
 | `scripts/cdp.mjs` | 通用 CDP 执行器（所有操作都用它） |
 | `scripts/gen-batch11.mjs` | 抖音号抽屉批量按 ID 搜索 + 勾选（最稳版本） |
 | `scripts/pick-all.mjs` | 添加视频弹窗按抖音号名称逐号全选并提交 |
+| `scripts/capture.mjs` | 按计划 ID 抓参数（详情页抖音号/素材/ROI/预算/商品）→ 生成 `qc/params-<原ID>.json`，供 copy.mjs 直接使用 |
+| `scripts/copy.mjs` | 一条龙：`confirm`（删除前确认单+截图推送）→ `delete <TOKEN>` → `all`（新建+发布+找新ID+加素材）；另有 `create/publish/materials/search/click` 子命令 |
+| `scripts/notify-media.mjs` | 确认图推送 QQ 官方机器人 + 企业微信（copy.mjs confirm 自动调用） |
 | `scripts/start-qc.cmd` | 双击启动 Edge（9222 + 固定 profile） |
 
 用法示例：
@@ -373,7 +376,18 @@ node scripts/cdp.mjs b1.json
 
 # 素材全选（逗号名单，单号也要带尾逗号）
 node scripts/pick-all.mjs "盖盖,蓝莓多米,在下猫猫雨哎"
+
+# 抓参数 → 出确认单 → 删除 → 重建（新名后缀 1124）
+node scripts/capture.mjs 1860422794525708 1880459534529783 qc/params-1880459534529783.json 1124
+node scripts/copy.mjs confirm 1860422794525708 1880459534529783      # 打印 TOKEN + 截图
+node scripts/copy.mjs delete  1860422794525708 1880459534529783 <TOKEN>
+node scripts/copy.mjs all     1860422794525708 qc/params-1880459534529783.json
 ```
+
+自动化要点（1.0.10 起已在代码里）：
+- 发布后 CDP 会报 `Inspected target navigated or closed`，这是页面跳转，发布通常已成功；`all` 会重导航列表并**按首行计划名核验**新计划 ID，不再依赖旧标签页 DOM。
+- 「添加视频」弹层从右侧滑入会短暂停在视口外（x≈innerWidth）：先**轮询等落位 ≤18s**，真异常才关标签重开（`reopen-tab`）重试。
+- 详情页「抖音号」tab 解析只取在投行：过滤「已删除」「无抖音号（仅含商城流量）」与计划行；aweme ID 含 `_`、`.`（如 `Xxxxxx_789.`、`_0528ff`、`Yang33ei.`），字符集不能只写 `[A-Za-z0-9]`。
 
 > 换账户时：把全文的 `aavid=1860000000000001` 换掉，profile 目录换成对应账户专用目录（不同账户建议分开 profile）。
 

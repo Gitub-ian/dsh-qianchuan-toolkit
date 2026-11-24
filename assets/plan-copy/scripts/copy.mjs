@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import os from 'node:os';
 import path from 'node:path';
 import { pickAllOnTarget } from './pick-all.mjs';
-import { connect, sleep, listPages } from '../../live-control/scripts/cdp-lib.mjs';
+import { connect, sleep, listPages, browserSend } from '../../live-control/scripts/cdp-lib.mjs';
 
 const W = 'C:/Users/admin/Documents/deepseek-harness/default-workspace';
 
@@ -23,6 +23,24 @@ let LAST = 'init';
 const mark = (l, e) => { LAST = l; console.log('[' + ((Date.now() - t0) / 1000).toFixed(1) + 's] ' + l + (e ? ' ' + e : '')); };
 // 看门狗：任何一步卡住都会打印最后一步并退出，避免静默长跑（默认 150s，可用 QC_WATCHDOG 覆盖）
 setTimeout(() => { console.log('[WATCHDOG] 卡在 ' + LAST + '，强制退出'); process.exit(9) }, Number(process.env.QC_WATCHDOG || 150000));
+
+// ---------- 通用自愈：关掉标签页重开 ----------
+// 用户 2026-11-21 确认：大多数异常（「添加视频」弹层跑到视口外、抽屉/搜索卡住）关闭标签页重开就能解决。
+const listUrl = (aavid) => 'https://qianchuan.jinritemai.com/overall-prom?aavid=' + aavid + '&campaignType=1&uniTab=ad&uniVideoTab=1&overallPromViewTab=plan';
+async function reopenTab(aavid) {
+  mark('reopen-tab', 'start');
+  try {
+    const pages = await listPages();
+    const old = pages.find((t) => t.type === 'page' && (t.url || '').indexOf('overall-prom') >= 0 && (t.url || '').indexOf(aavid) >= 0);
+    if (old) { await browserSend('Target.closeTarget', { targetId: old.id }); mark('reopen-tab', 'closed ' + old.id) }
+  } catch (e) { mark('reopen-tab', 'close-err ' + String(e.message).slice(0, 60)) }
+  await browserSend('Target.createTarget', { url: listUrl(aavid) });
+  await sleep(6000);
+  const page = await connect('overall-prom');
+  await page.eval(INJECT);
+  mark('reopen-tab', 'new ' + (page.id || ''));
+  return page
+}
 
 // ---------- 注入到页面里的工具函数（不依赖坐标） ----------
 function qcHelpers() {
@@ -106,6 +124,16 @@ const ROI_INPUT = 'document.querySelectorAll(".aurora-qc-input-number-input")[0]
 const BUDGET_INPUT = 'document.querySelectorAll(".aurora-qc-input-number-input")[1]';
 const NAME_INPUT = '[...document.querySelectorAll("input")].find(x => (x.placeholder||"").includes("计划名称，1-50"))';
 
+// 优先连「本账户的 overall-prom」标签：多开标签时 connect('jinritemai') 可能抓到别的账户的 uni-prom，导致搜错页
+async function connectFor(aavid) {
+  try {
+    const pages = await listPages();
+    const hit = pages.find((t) => t.type === 'page' && (t.url || '').indexOf('overall-prom') >= 0 && (t.url || '').indexOf(aavid) >= 0);
+    if (hit) return await connect('overall-prom', { id: hit.id });
+  } catch (e) { mark('connectFor', 'fallback ' + String(e.message).slice(0, 40)) }
+  return await connect('jinritemai')
+}
+
 async function openList(page, aavid) {
   await page.send('Page.navigate', { url: 'https://qianchuan.jinritemai.com/overall-prom?aavid=' + aavid + '&campaignType=1&uniTab=ad&marGoal=1&uniVideoTab=1&overallPromViewTab=plan' }, 15000);
   await sleep(2500);
@@ -145,7 +173,7 @@ async function ensurePlanList(page) {
 
 async function cmdSearch() {
   const aavid = process.argv[3], planId = process.argv[4];
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await openList(page, aavid);
   const hitRes = await searchPlan(page, planId);
   mark('search-hit', hitRes);
@@ -169,7 +197,7 @@ async function cmdDelete() {
     if (!fs.existsSync(rc.shot)) throw new Error('拒绝删除：确认截图文件丢失 ' + rc.shot);
     mark('receipt-ok', rc.shot + ' @ ' + new Date(rc.ts).toISOString());
   } else { mark('WARN', '--force 跳过了确认单校验，仅限用户已口头明确授权'); }
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await openList(page, aavid);
   const hit = (await searchPlan(page, planId)) !== 'miss';
   if (!hit) throw new Error('未唯一命中，拒绝删除');
@@ -189,7 +217,7 @@ async function cmdDelete() {
 async function cmdConfirm() {
   const aavid = process.argv[3], planId = process.argv[4];
   if (!planId) throw new Error('用法: copy.mjs confirm <aavid> <planId>');
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await openList(page, aavid);
   const hit = (await searchPlan(page, planId)) !== 'miss';
   if (!hit) throw new Error('拒绝出确认图：搜索结果里没有唯一该 ID 的行');
@@ -225,7 +253,7 @@ async function cmdConfirm() {
 
 async function cmdCreate() {
   const aavid = process.argv[3], p = JSON.parse(fs.readFileSync(process.argv[4], 'utf8'));
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await page.send('Page.navigate', { url: 'https://qianchuan.jinritemai.com/create-ad/overall-product?aavid=' + aavid }, 15000);
   await page.eval(INJECT);   // 必须先注入 __qc，否则 ready 判断里的 __qc.text() 直接抛错
   const ready = await wait(page, '/选择投放对象/.test(__qc.text())', 20000);
@@ -351,6 +379,16 @@ async function addMaterialsViaDrawer(page, aavid, planId, names, opts = {}) {
   const popup = await wait(page, '(__qc.text().indexOf("已选择") >= 0)', 15000);
   if (!popup) throw new Error('「添加视频」弹窗未打开');
   mark('popup');
+  // 弹层从右侧滑入，位置会短暂停在视口外：轮询等它落定（≤18s）再看几何
+  const geo = await page.eval('(async () => { const sl=(ms)=>new Promise(r=>setTimeout(r,ms)); for (let i=0;i<26;i++){ const e=document.querySelector(".main-vmok-plugin-create-material-list"); if(e){ const r=e.getBoundingClientRect(); if(r.width>400 && r.x < innerWidth-200) return [Math.round(r.x),Math.round(r.width),innerWidth] } await sl(700) } const e2=document.querySelector(".main-vmok-plugin-create-material-list"); if(!e2) return null; const r2=e2.getBoundingClientRect(); return [Math.round(r2.x),Math.round(r2.width),innerWidth] })()', 40000);
+  if (!Array.isArray(geo) || geo[0] >= geo[2] - 200) {
+    mark('popup-offscreen', JSON.stringify(geo));
+    if (!opts._reopened) {
+      const p2 = await reopenTab(aavid);
+      return await addMaterialsViaDrawer(p2, aavid, planId, names, Object.assign({}, opts, { _reopened: true }))
+    }
+    throw new Error('「添加视频」弹层在视口外（x=' + JSON.stringify(geo) + '），重开标签后仍失败');
+  }
   const targets = (await listPages()).filter((t) => t.type === 'page' && (t.url || '').indexOf('qianchuan') >= 0);
   if (!targets.length) throw new Error('找不到千川标签页');
   // 绑定到当前驱动的那个标签页（有 id 就按 id，没有就按连接时的 URL 兜底）
@@ -377,7 +415,7 @@ async function cmdMaterials() {
   const names = Object.values(p.awemeNames || {});
   if (!names.length) throw new Error('params.json 里没有 awemeNames，拿不到抖音号名单');
   if (dry) {
-    const page0 = await connect('jinritemai');
+    const page0 = await connectFor(aavid);
     mark('connected');
     await openList(page0, aavid);
     mark('list-ready');
@@ -391,9 +429,18 @@ async function cmdMaterials() {
     mark('dry', JSON.stringify({ hit: hit, chip: chip, drawer: drawer, names: names.length }));
     return
   }
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await page.eval(INJECT);
-  const res = await addMaterialsViaDrawer(page, aavid, planId, names, { cancelAfterPick: process.argv.includes('--picktest') });
+  const prePick = ['nav-done','injected','page-ready','tabs','search-box','list-ready','search-unique','material-tab','drawer-material','material-src','material-type','popup','popup-offscreen'];
+  let res;
+  try {
+    res = await addMaterialsViaDrawer(page, aavid, planId, names, { cancelAfterPick: process.argv.includes('--picktest') });
+  } catch (e) {
+    if (prePick.indexOf(LAST) < 0) throw e;
+    mark('materials-retry', String(e.message).slice(0, 90));
+    const p2 = await reopenTab(aavid);
+    res = await addMaterialsViaDrawer(p2, aavid, planId, names, { cancelAfterPick: process.argv.includes('--picktest'), _reopened: true });
+  }
   mark('result', JSON.stringify({ totalVideos: res.totalVideos, submitted: res.submitted, picktest: process.argv.includes('--picktest') }));
 }
 
@@ -405,24 +452,49 @@ async function cmdAll() {
   await cmdCreate();
   process.argv = argv0.concat(['publish']);
   await cmdPublish();
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await page.eval(INJECT);
-  const newId = await newestPlanId(page);
+  const wantName = JSON.parse(fs.readFileSync(paramsFile, 'utf8')).planName;
+  let newId = null, topRow = '';
+  for (let i = 0; i < 5; i++) {
+    try {
+      const p3 = await connectFor(aavid);
+      await p3.send('Page.navigate', { url: listUrl }, 20000);
+    } catch (e) { mark('list-nav-err', String(e.message).slice(0, 60)) }
+    await sleep(8000);
+    try {
+      const p4 = await connectFor(aavid);
+      newId = await newestPlanId(p4);
+      topRow = await p4.eval('(() => { const tr = document.querySelector("tbody tr"); return tr ? (tr.innerText || "").replace(/\\s+/g, " ").trim() : "" })()');
+    } catch (e) { newId = null; topRow = '' }
+    if (newId && String(topRow).indexOf(wantName) >= 0) break;
+    mark('new-plan-retry', i + ' ' + String(topRow).slice(0, 40));
+  }
   if (!newId) throw new Error('发布后拿不到新计划 ID');
-  mark('new-plan', newId);
+  if (String(topRow).indexOf(wantName) < 0) throw new Error('列表首行不是刚建的计划（首行=' + String(topRow).slice(0, 60) + ' 期望=' + wantName + '）');
+  mark('new-plan', newId + ' ' + wantName);
   process.argv = argv0.concat(['materials', aavid, newId, paramsFile]);
   await cmdMaterials();
 }
 
 async function cmdPublish() {
-  const page = await connect('jinritemai');
+  const aavid = process.argv[3] || '';
+  let page;
+  try { page = await connect('create-ad') } catch (e) { page = await connectFor(aavid) }
   await page.eval(INJECT);
   await page.eval('__qc.clickText("发布计划")');
   const dlg = await wait(page, '/确认发布/.test(__qc.text())', 8000);
   if (!dlg) throw new Error('发布确认框未出现');
   const c = await clickByText(page, '确认发布');
   mark('confirm', JSON.stringify(c));
-  const done = await wait(page, 'location.href.includes("overall-prom") && location.href.includes("createSuccess")', 30000);
+  let done = false;
+  try {
+    done = await wait(page, 'location.href.includes("overall-prom") && location.href.includes("createSuccess")', 30000);
+  } catch (e) {
+    // 发布后页面导航会让 CDP 当前 target 失效：按「已提交」继续，靠列表首行核验
+    mark('publish-wait-err', String(e.message).slice(0, 70));
+    done = true;
+  }
   mark('published', done ? 'ok' : 'timeout');
   if (!done) throw new Error('发布后未跳到 createSuccess');
 }
@@ -452,7 +524,7 @@ async function clickByText(page, text) {
   return { text: text, layer: 'shadow', click: sh, ms: Date.now() - t };
 }
 async function cmdClick() {
-  const page = await connect('jinritemai');
+  const page = await connectFor(aavid);
   await page.eval(INJECT);
   const text = process.argv[3] || '发布计划';
   const dry = process.argv.includes('--dry');

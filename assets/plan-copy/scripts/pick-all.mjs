@@ -45,8 +45,15 @@ async function click(c, x, y) {
 }
 const getSel = `(()=>{const t=document.body.innerText.replace(/[ \\t]+/g,' ');const m=t.match(/已选择\\s*(\\d+)\\/200/);return m?Number(m[1]):-1})()`
 const clickTab = (name) => `(()=>{const ls=[...document.querySelectorAll('${NAV}')];for(const list of ls){const t=[...list.children].find(c=>c.innerText&&c.innerText.replace(/\\s+/g,' ').trim().includes(${JSON.stringify(name)}));if(t){t.click();return 'OK'}}return 'NOTAB'})()`
-const listCards = `(()=>[...document.querySelectorAll('${CARD}')].map(c=>{const w=c.querySelector('[itemid]')||c;return w.getAttribute('itemid')}).filter(Boolean))()`
-const cardPos = (id) => `(()=>{const c=[...document.querySelectorAll('${CARD}')].find(x=>{const w=x.querySelector('[itemid]')||x;return w.getAttribute('itemid')===${JSON.stringify(id)}});if(!c)return null;c.scrollIntoView({block:'center',inline:'nearest'});const r=c.getBoundingClientRect();if(r.width<10)return null;return {x:Math.round(r.x+r.width/2),y:Math.round(r.y+r.height/2)}})()`
+// 只取真能被点到的卡片：弹窗 DOM 里有隐藏同构副本，坐标取自副本会点击落空或点穿页面
+// 返回全部去重卡片 id（网格多行、可横向滚动；滚动与命中判定交给 cardPos）
+const listCards = `(()=>{const seen=new Set();const out=[];for(const c of document.querySelectorAll('${CARD}')){const w=c.querySelector('[itemid]')||c;const id=w.getAttribute('itemid');if(!id||seen.has(id))continue;const r=c.getBoundingClientRect();if(r.width<10||r.height<10)continue;seen.add(id);out.push({id,y:Math.round(r.y),x:Math.round(r.x)})}out.sort((a,b)=>a.y-b.y||a.x-b.x);return out.map(o=>o.id)})()`
+const chainInfo = (id) => `(()=>{const c=[...document.querySelectorAll('${CARD}')].map(x=>x).filter(x=>(x.querySelector('[itemid]')||x).getAttribute('itemid')===${JSON.stringify(id)})[0];if(!c)return null;const out=[];let a=c;for(let i=0;i<8&&a&&a!==document.body;i++,a=a.parentElement){const s=getComputedStyle(a);const r=a.getBoundingClientRect();out.push({t:a.tagName,c:String(a.className).slice(0,60),ox:s.overflowX,oy:s.overflowY,sl:a.scrollLeft,sw:a.scrollWidth,cw:a.clientWidth,x:Math.round(r.x),w:Math.round(r.width),tr:s.transform.slice(0,30)})}return out})()`
+// 面板被渲染到视口右侧外（左边界≥innerWidth）时，强制 fixed 定位到屏幕内，避免点不到卡片
+const fixOffscreen = `(()=>{const el=document.querySelector('.main-vmok-plugin-create-material-list');if(!el)return 'nolist';let a=el.offsetParent,tf=null;while(a&&a!==document.documentElement){const s=getComputedStyle(a);if(s.transform&&s.transform!=='none'){tf=a;break}a=a.offsetParent}if(!tf){let p=el.parentElement;while(p&&p!==document.documentElement){const s=getComputedStyle(p);if(s.transform&&s.transform!=='none'){tf=p;break}p=p.parentElement}}if(tf){tf.style.transform='none'}let r=el.getBoundingClientRect();if(!(r.x>=0&&r.x+40<innerWidth)){el.style.position='fixed';el.style.left='320px';el.style.top='60px';el.style.zIndex='99999';el.style.background='#fff';el.style.maxHeight=(innerHeight-90)+'px';el.style.overflow='auto'}const r2=el.getBoundingClientRect();return 'tf='+(tf?String(tf.className).slice(0,42):'none')+' x='+Math.round(r.x)+' -> '+Math.round(r2.x)})()`
+const cardPos = (id) => `(()=>{const cands=[...document.querySelectorAll('${CARD}')].filter(x=>(x.querySelector('[itemid]')||x).getAttribute('itemid')===${JSON.stringify(id)});if(!cands.length)return {err:'nocard'};const seen=[];for(const c of cands){const r=c.getBoundingClientRect();if(r.width<10||r.height<10){seen.push(['tiny',Math.round(r.x)]);continue}const cx=Math.round(r.x+r.width/2),cy=Math.round(r.y+r.height/2);if(cx<0||cy<0||cx>innerWidth||cy>innerHeight){seen.push(['off',Math.round(r.x),Math.round(r.y)]);continue}const e=document.elementFromPoint(cx,cy);if(!e||!c.contains(e)){seen.push(['hid',Math.round(r.x),Math.round(r.y)]);continue}return {x:cx,y:cy}}return {err:'noclick',n:cands.length,seen}})()`
+const listPos = `(()=>[...document.querySelectorAll('${CARD}')].slice(0,6).map(c=>{const r=c.getBoundingClientRect();return [Math.round(r.x),Math.round(r.y),Math.round(r.width),Math.round(r.height)]}))()`
+const resetScroll = `(()=>{let n=0;for(const el of document.querySelectorAll('*')){const s=getComputedStyle(el);if((s.overflowX==='auto'||s.overflowX==='scroll')&&el.scrollWidth>el.clientWidth+4){if(el.scrollLeft!==0){el.scrollLeft=0;n++}}}return n})()`
 const filterFind = `(()=>{const ins=[...document.querySelectorAll('input[type=checkbox]')];for(const i of ins){const lab=((i.closest('label')||i.parentElement||{}).innerText||'');if(lab.includes('过滤不良素材'))return i}return null})()`
 const filterToggle = `(()=>{const i=${filterFind};if(!i)return 'NOBOX';i.click();return 'OK'})()`
 
@@ -61,10 +68,10 @@ async function pollCards(c, maxMs) {
 }
 
 async function selectCards(c, ids) {
-  let clicked = 0, retried = 0
+  let clicked = 0, retried = 0, skipped = 0, why = null
   for (const id of ids) {
     const p = await ev(c, cardPos(id))
-    if (!p) continue
+    if (!p || p.err || typeof p.x !== 'number') { skipped++; if (!why && p && p.err === 'noclick') why = JSON.stringify(await ev(c, chainInfo(id))); else why = why || (p && (p.err || 'bad')) + ' ' + JSON.stringify(p); continue }
     await sleep(120)
     const before = await ev(c, getSel)
     await click(c, p.x, p.y)
@@ -76,7 +83,7 @@ async function selectCards(c, ids) {
     }
     clicked++
   }
-  return { clicked, retried }
+  return { clicked, retried, skipped, why }
 }
 
 
@@ -85,29 +92,35 @@ export async function pickAllOnTarget(target, names) {
   const c = await connect(target)
   const modalOpen = await ev(c, `(()=>/已选择\\s*\\d+\\/200/.test(document.body.innerText))()`)
   if (!modalOpen) return { error: '「添加视频」弹窗没开，先点「添加视频」' }
+  await ev(c, resetScroll)
   
   const log = []
+  const fixRes = 'skip'
   for (const name of names) {
-    const r = await ev(c, clickTab(name))
+    let r = await ev(c, clickTab(name))
+    // 切号后 tab 列表偶尔还未渲染完，重试几次再判定失败
+    for (let i = 0; i < 4 && r !== 'OK'; i++) { await sleep(900); r = await ev(c, clickTab(name)) }
     if (r !== 'OK') { log.push({ name, err: r }); continue }
+    await ev(c, resetScroll)
     let ids = await pollCards(c, 8000)
+    if (ids.length) { await sleep(1500); ids = await ev(c, listCards) }
     let refreshed = false
     if (!ids.length) {
       const t = await ev(c, filterToggle)
       if (t === 'OK') { refreshed = true; await sleep(1200); ids = await pollCards(c, 12000) }
     }
     const before = await ev(c, getSel)
-    let sel = { clicked: 0, retried: 0 }
+    let sel = { clicked: 0, retried: 0, skipped: 0 }
     if (ids.length) sel = await selectCards(c, ids)
     const after = await ev(c, getSel)
     if (refreshed) { await ev(c, filterToggle); await sleep(600) }
-    log.push({ name, cards: ids.length, before, after, delta: after - before, retried: sel.retried, note: ids.length ? undefined : '该号主页无可投视频（取消过滤后仍为空）' })
+    log.push({ name, cards: ids.length, before, after, delta: after - before, retried: sel.retried, skipped: sel.skipped, why: sel.why, pos: await ev(c, listPos), note: ids.length ? undefined : '该号主页无可投视频（取消过滤后仍为空）' })
   }
   const okb = await ev(c, `(()=>{const bs=[...document.querySelectorAll('button')].filter(b=>b.innerText.trim()==='确定'&&b.getBoundingClientRect().width>0);if(!bs.length)return 'NOOK';const r=bs[bs.length-1].getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()`)
   let submitted = false
   if (Array.isArray(okb)) { await click(c, okb[0], okb[1]); await sleep(5000); submitted = true }
   const total = await ev(c, `(()=>{const m=document.body.innerText.match(/共\\d+个视频/);return m?m[0]:null})()`)
-  return { ok: true, submitted, totalVideos: total, log }
+  return { ok: true, fix: fixRes, submitted, totalVideos: total, log }
 }
 
 async function main() {
