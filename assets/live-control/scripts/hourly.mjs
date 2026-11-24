@@ -41,6 +41,8 @@ function deadlineOf(hhmm) {
   return d.getTime()
 }
 const DEADLINE = UNTIL ? deadlineOf(UNTIL) : 0
+const START_AT = arg('start-at', '')                 // 例：--start-at 07:00 等到 07:00 才开始跑第一轮
+const START_AT_MS = START_AT ? deadlineOf(START_AT) : 0
 
 const P = paths()
 const pad = (n) => String(n).padStart(2, '0')
@@ -606,6 +608,26 @@ if (has('doctor')) {
 const groups = groupByAccount(cfg).filter((g) => !ONLY || g.account.key === ONLY || g.account.aavid === ONLY)
 if (!groups.length) { console.error('没有可跑的监控目标（先 node targets.mjs add 或改 targets.json）'); process.exit(2) }
 
+// ---- 单实例锁：开机自启的巡航可能和手动启动的巡航撞车，两个进程同时提交会重复控量 ----
+if (WATCH) {
+  const lockFile = path.join(P.home, 'watch.pid')
+  try {
+    const old = Number(String(fs.readFileSync(lockFile, 'utf8')).trim())
+    if (old && old !== process.pid) {
+      let alive = false
+      try { process.kill(old, 0); alive = true } catch (e) { alive = e.code === 'EPERM' }
+      if (alive) { console.error('已有一个巡航在跑（pid ' + old + '），本次不重复启动；确认那个进程已死可删除 ' + lockFile); process.exit(4) }
+    }
+  } catch { /* 没有锁文件或读不了，继续 */ }
+  try { fs.mkdirSync(P.home, { recursive: true }); fs.writeFileSync(lockFile, String(process.pid)) } catch (e) { console.error('写锁文件失败（已忽略）：' + e.message) }
+  process.on('exit', () => { try { if (String(fs.readFileSync(lockFile, 'utf8')).trim() === String(process.pid)) fs.unlinkSync(lockFile) } catch { /* 忽略 */ } })
+}
+
+if (START_AT_MS) {
+  const ms = Math.max(0, START_AT_MS - Date.now())
+  log('定时启动：等到 ' + new Date(START_AT_MS).toLocaleString('zh-CN') + ' 才开始巡航（约 ' + Math.round(ms / 60000) + ' 分钟后）')
+  await sleep(ms)
+}
 log('本轮 ' + groups.length + ' 个账号 / ' + groups.reduce((s, g) => s + g.targets.length, 0) + ' 个目标' + (DRY ? ' [dry-run]' : '') + (REPORT_ALL ? ' [每轮推送]' : '') + (DEADLINE ? ' [跑到 ' + new Date(DEADLINE).toLocaleString('zh-CN') + ']' : ''))
 if (REPORT_ALL && WATCH) {
   const r0 = resolveRule(cfg, groups[0].targets[0])
@@ -649,6 +671,14 @@ try {
     if (REPORT_ALL || recs.some((r) => (r.anomalies || []).length)) await reportRound(i, recs, next)
     if (last) break
     if (DEADLINE && next > DEADLINE) {
+      const remain = DEADLINE - Date.now()
+      // 收尾轮：最后一个 :15/:30/:45/:55 节点已越过收工时间，但离收工还有余量时，补跑一轮（收工前 45 秒）
+      if (remain > 90000) {
+        const fin = DEADLINE - 45000
+        log('最后节点已超出收工时间，改在 ' + new Date(fin).toLocaleString('zh-CN') + ' 加跑收尾轮（收工 ' + new Date(DEADLINE).toLocaleString('zh-CN') + '）')
+        await sleep(Math.max(0, fin - Date.now()))
+        continue
+      }
       log('已到收工时间 ' + new Date(DEADLINE).toLocaleString('zh-CN') + '，巡航结束')
       if (REPORT_ALL) await notify({ dir: P.home, title: '千川巡航：已收工', text: '本轮后到达停止时间 ' + new Date(DEADLINE).toLocaleString('zh-CN') + '，巡航结束。', level: 'info', event: 'stop', say: (s) => log('    notify: ' + s) }).catch(() => {})
       break

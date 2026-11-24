@@ -95,3 +95,15 @@ docs/notify.sample.json     通知配置示例
 ## 许可
 
 MIT
+
+## 每日窗口与开机自启（可选）
+
+`assets/live-control/scripts/daily-supervisor.mjs` 负责「每天 07:00 开始、次日 01:00 收工」的循环：
+
+```
+QC_HOME="<数据目录>" node assets/live-control/scripts/daily-supervisor.mjs            # 常驻守夜
+QC_HOME="<数据目录>" node assets/live-control/scripts/daily-supervisor.mjs --plan     # 只看当前是否在窗口内
+node assets/live-control/scripts/daily-supervisor.mjs --start 08:00 --end 23:30       # 自定义窗口
+```
+
+开机自启模板在 `assets/live-control/autostart/`：`qc-cruise-autostart.vbs`（登录后确保调试 Chrome 再起守夜，需 `QC_BASE` 指向本包目录）、`start-cruise.cmd`、`stop-cruise.cmd`（先杀守夜再杀巡航）。详见该目录 README。
