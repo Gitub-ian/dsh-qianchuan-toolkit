@@ -33,6 +33,7 @@ const END = arg('end', '01:00')
 const ONCE = has('once')
 const INTERVAL = Math.max(20, Number(arg('interval', '60'))) * 1000
 const STALE_MS = Math.max(2, Number(arg('stale-min', '6'))) * 60000
+const GRACE_MS = Math.max(0, Number(arg('grace-min', '3'))) * 60000
 const ALERT_WIN = 30 * 60000
 
 const log = (...a) => console.log(new Date().toLocaleString('zh-CN'), ...a)
@@ -101,10 +102,13 @@ async function check() {
 
   if (!hb) issues.push({ kind: 'no-heartbeat', msg: '还没有心跳文件（巡航可能从未成功跑过一轮）' })
   else {
+    // 关键：巡航两轮之间最长 15 分钟，所以「多久没更新」不能当成卡死依据。
+    // 只有「已经过了它自己说的下一轮时间 + 宽限」才算卡死。
     const hbMs = new Date(hb.ts).getTime()
     const age = now - hbMs
-    const overdue = hb.nextAt && now > Number(hb.nextAt) + STALE_MS
-    if (age > STALE_MS || overdue) issues.push({ kind: 'heartbeat-stale', msg: '心跳停止 ' + Math.round(age / 60000) + ' 分钟（最后 ' + new Date(hb.ts).toLocaleString('zh-CN') + '，第 ' + (hb.round || '?') + ' 轮' + (hb.nextAt ? '，应于 ' + new Date(hb.nextAt).toLocaleString('zh-CN') + ' 有新心跳' : '') + '）' })
+    const dueAt = Number(hb.nextAt || 0) || Number(hb.nextRound || 0) || 0
+    const overdue = dueAt ? now > dueAt + GRACE_MS : age > STALE_MS
+    if (overdue) issues.push({ kind: 'heartbeat-stale', msg: (dueAt ? '已过下一轮时间 ' + Math.round((now - dueAt) / 60000) + ' 分钟仍未出现新心跳' : '心跳停止 ' + Math.round(age / 60000) + ' 分钟') + '（最后 ' + new Date(hb.ts).toLocaleString('zh-CN') + '，第 ' + (hb.round || '?') + ' 轮' + (dueAt ? '，应于 ' + new Date(dueAt).toLocaleString('zh-CN') + ' 有新心跳' : '') + '）' })
   }
   if (!alive(supPid)) issues.push({ kind: 'supervisor-dead', msg: '守夜进程不存在（supervisor.pid=' + (supPid || '无') + '）' })
   if (!alive(watchPid) && inWindow(now)) issues.push({ kind: 'watch-dead', msg: '巡航进程不存在（watch.pid=' + (watchPid || '无') + '）' })
