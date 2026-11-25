@@ -35,10 +35,10 @@
 | 链路 | 命令 | 通过标准 |
 |---|---|---|
 | 搜 ID → 单计划 | `node scripts/copy.mjs search <aavid> <计划ID>` | 列表唯一命中，名称/ID 对得上 |
-| 抓参数 | `node scripts/capture.mjs <aavid> <计划ID> qc/params-<计划ID>.json` | 抖音号数 / 商品ID / ROI / 预算 与原计划一致 |
+| 抓参数 | `node scripts/capture.mjs <aavid> <计划ID> qc/params-<计划ID>.json [后缀]` | 抖音号数 / 商品ID / ROI / 预算 与原计划一致；`outJson` 必填，`[后缀]` 不传默认 `1124`（要建当天日期必须显式传，如 `1125`） |
 | 截图发确认 | `node scripts/copy.mjs confirm <aavid> <计划ID>` | 用户收到「名称 + ID + 截图」并明确回复「删」 |
-| 删计划 | `node scripts/copy.mjs delete <aavid> <计划ID>` | toast「删除成功」+ 列表「共 0 条计划」 |
-| 新建计划 | `node scripts/copy.mjs create <aavid> qc/params-<计划ID>.json` | 回读 商品 / 抖音号数 / ROI / 预算 一致 |
+| 删计划 | `node scripts/copy.mjs delete <aavid> <计划ID> <确认单TOKEN>` | TOKEN 取 `confirm` 的输出；无单 / 超 30 分钟 / TOKEN 不符 / 截图丢失会被直接拒绝；通过后 toast「删除成功」+ 列表「共 0 条计划」 |
+| 新建计划（含发布） | `node scripts/copy.mjs create <aavid> qc/params-<计划ID>.json` | 内部自动执行「发布计划」并回列表抓新计划 ID；回读 商品 / 抖音号数 / ROI / 预算 一致 |
 | 搜新名 → 详情加素材 | `node scripts/copy.mjs materials <aavid>` 或 `node scripts/pick-all.mjs "号1,号2,"` | 每号已选数 = 该号主页素材数 |
 | 点「确定」 | —— | 完成，汇报 ID / 名称 / 参数 / 回执，**不再动作** |
 
