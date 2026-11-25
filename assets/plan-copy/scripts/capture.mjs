@@ -28,8 +28,10 @@ async function prepFn() {
   const rows = [...document.querySelectorAll('tbody tr')].map((r) => T(r.innerText)).filter((t) => t.indexOf('ID：') >= 0);
   const row = [...document.querySelectorAll('tbody tr')].find((r) => T(r.innerText).includes(pid));
   if (rows.length !== 1 || !row) return JSON.stringify({ err: 'notunique', n: rows.length });
-  const name = T(rows[0]).split(' ID')[0];
-  const nameEl = [...row.querySelectorAll('*')].find((e) => e.children.length === 0 && T(e.innerText) === name);
+  const raw = T(rows[0]).split(' ID')[0];
+  // 列表行名可能带平台状态标签（[扶持中] / [投放中] / [已暂停] …），标签不是计划名的一部分，剥掉再点
+  const name = raw.replace(/^[[【]\s*(?:扶持中|已暂停|投放中|已删除|审核中|删除中)\s*[\]】]\s*/, '');
+  const nameEl = [...row.querySelectorAll('*')].find((e) => e.children.length === 0 && (T(e.innerText) === raw || T(e.innerText) === name));
   if (!nameEl) return JSON.stringify({ err: 'noname', name });
   nameEl.click(); await sleep(4500);
   return JSON.stringify({ row: rows[0], name });
