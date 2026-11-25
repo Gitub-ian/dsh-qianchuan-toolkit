@@ -8,7 +8,8 @@ import { pathToFileURL } from 'node:url'
 // 逻辑:
 //   1) 切号 JS click（横向列表坐标点不动，只能 JS click）
 //   2) 切号后轮询等卡片渲染（最多 8s），不要固定 sleep 后立刻取
-//   3) 每张卡片 CDP 真实点击；点完读「已选择 N/200」，没涨就补点一次（漏勾/点空）
+//   3) 每张卡片 CDP 真实点击；点完先读「这张卡是否已选中」，只对明确未选中的补点一次——卡片是开关式复选框，二次点已选中的卡等于取消勾选
+//      （「已选择 N/200」是全弹窗计数、刷新有延迟，不能当单卡状态用）
 //   4) 某号 0 卡片 → 取消勾选「过滤不良素材」刷新 → 仍为 0 判定该号确实无视频，继续下一个号
 //   5) 全部号点完，一次性点「确定」提交；不再二次进弹窗、不再翻抽屉核对
 import fs from 'node:fs'
@@ -44,6 +45,9 @@ async function click(c, x, y) {
   await send(c, 'Input.dispatchMouseEvent', { type: 'mouseReleased', x, y, button: 'left', clickCount: 1 })
 }
 const getSel = `(()=>{const t=document.body.innerText.replace(/[ \\t]+/g,' ');const m=t.match(/已选择\\s*(\\d+)\\/200/);return m?Number(m[1]):-1})()`
+// 单张卡片是否已选中：1=已选中 0=明确未选中 -1=判断不出（判断不出时不补点，只记账）
+const isSel = (id) => `(()=>{const cands=[...document.querySelectorAll('${CARD}')].filter(x=>(x.querySelector('[itemid]')||x).getAttribute('itemid')===${JSON.stringify(id)});const c=cands.find(x=>{const r=x.getBoundingClientRect();return r.width>=10&&r.height>=10})||cands[0];if(!c)return -1;const SEL=/selected|checked/i,UN=/(un|dis)selected|unchecked|not-selected/i;const cls=(e)=>String(e.className||'');if(SEL.test(cls(c))&&!UN.test(cls(c)))return 1;const cb=c.querySelector('input[type=checkbox],input[type=radio]');if(cb)return cb.checked?1:0;const ac=c.getAttribute('aria-checked');if(ac==='true')return 1;if(ac==='false')return 0;for(const d of c.querySelectorAll('*')){const k=cls(d);if(SEL.test(k)&&!UN.test(k))return 1}return -1})()`
+async function waitSel(c, id, maxMs) { const t0 = Date.now(); let st = await ev(c, isSel(id)); while (st !== 1 && Date.now() - t0 < maxMs) { await sleep(120); st = await ev(c, isSel(id)) } return st }
 const clickTab = (name) => `(()=>{const ls=[...document.querySelectorAll('${NAV}')];for(const list of ls){const t=[...list.children].find(c=>c.innerText&&c.innerText.replace(/\\s+/g,' ').trim().includes(${JSON.stringify(name)}));if(t){t.click();return 'OK'}}return 'NOTAB'})()`
 // 只取真能被点到的卡片：弹窗 DOM 里有隐藏同构副本，坐标取自副本会点击落空或点穿页面
 // 返回全部去重卡片 id（网格多行、可横向滚动；滚动与命中判定交给 cardPos）
@@ -68,24 +72,27 @@ async function pollCards(c, maxMs) {
 }
 
 async function selectCards(c, ids) {
-  let clicked = 0, retried = 0, skipped = 0, why = null
+  let clicked = 0, retried = 0, skipped = 0, already = 0, why = null
+  const unknown = []
   for (const id of ids) {
     const p = await ev(c, cardPos(id))
     if (!p || p.err || typeof p.x !== 'number') { skipped++; if (!why && p && p.err === 'noclick') why = JSON.stringify(await ev(c, chainInfo(id))); else why = why || (p && (p.err || 'bad')) + ' ' + JSON.stringify(p); continue }
     await sleep(120)
-    const before = await ev(c, getSel)
+    // 已经勾上的卡绝不点：开关式复选框，二次点击=取消勾选（旧版靠「已选择 N/200」补点，计数刷新慢就会自己取消掉）
+    if ((await ev(c, isSel(id))) === 1) { already++; continue }
     await click(c, p.x, p.y)
-    await sleep(260)
-    let after = await ev(c, getSel)
-    if (after === before) {
-      const p2 = await ev(c, cardPos(id))
-      if (p2) { await sleep(120); await click(c, p2.x, p2.y); await sleep(320); retried++ }
-    }
     clicked++
+    let st = await waitSel(c, id, 1200)
+    if (st !== 1) {
+      if (st === 0) {
+        const p2 = await ev(c, cardPos(id))
+        if (p2 && typeof p2.x === 'number' && (await ev(c, isSel(id))) === 0) { await click(c, p2.x, p2.y); retried++; st = await waitSel(c, id, 1200) }
+      }
+      if (st !== 1) unknown.push(id)
+    }
   }
-  return { clicked, retried, skipped, why }
+  return { clicked, retried, skipped, already, unknown, why }
 }
-
 
 // 供 copy.mjs 复用：在已打开的「添加视频」弹窗里按名单逐个抖音号全选，返回结构化日志
 export async function pickAllOnTarget(target, names) {
@@ -110,11 +117,11 @@ export async function pickAllOnTarget(target, names) {
       if (t === 'OK') { refreshed = true; await sleep(1200); ids = await pollCards(c, 12000) }
     }
     const before = await ev(c, getSel)
-    let sel = { clicked: 0, retried: 0, skipped: 0 }
+    let sel = { clicked: 0, retried: 0, skipped: 0, already: 0, unknown: [] }
     if (ids.length) sel = await selectCards(c, ids)
     const after = await ev(c, getSel)
     if (refreshed) { await ev(c, filterToggle); await sleep(600) }
-    log.push({ name, cards: ids.length, before, after, delta: after - before, retried: sel.retried, skipped: sel.skipped, why: sel.why, pos: await ev(c, listPos), note: ids.length ? undefined : '该号主页无可投视频（取消过滤后仍为空）' })
+    log.push({ name, cards: ids.length, before, after, delta: after - before, clicked: sel.clicked, retried: sel.retried, already: sel.already, unknown: sel.unknown, skipped: sel.skipped, why: sel.why, pos: await ev(c, listPos), note: ids.length ? undefined : '该号主页无可投视频（取消过滤后仍为空）' })
   }
   const okb = await ev(c, `(()=>{const bs=[...document.querySelectorAll('button')].filter(b=>b.innerText.trim()==='确定'&&b.getBoundingClientRect().width>0);if(!bs.length)return 'NOOK';const r=bs[bs.length-1].getBoundingClientRect();return [Math.round(r.x+r.width/2),Math.round(r.y+r.height/2)]})()`)
   let submitted = false
