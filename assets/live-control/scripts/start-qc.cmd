@@ -1,12 +1,48 @@
 @echo off
-chcp 65001 >nul
-set CHROME="C:\Program Files\Google\Chrome\Application\chrome.exe"
-if not exist %CHROME% set CHROME="C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-if not exist %CHROME% (
-  echo 找不到 Chrome 或 Edge，请手动改本文件里的浏览器路径。
+rem ===== QianChuan debug browser launcher (double-click, no approval needed) =====
+rem port: 9222   profile: %USERPROFILE%\qc-chrome   Chrome first, Edge fallback
+rem This tab (qianchuan login/list) is the start tab: the scripts navigate from it themselves.
+setlocal
+set "PORT=9222"
+set "PROFILE=%USERPROFILE%\qc-chrome"
+
+curl -s -m 2 http://127.0.0.1:%PORT%/json/version >nul 2>&1
+if not errorlevel 1 (
+  echo [QC] already listening on port %PORT%
+  exit /b 0
+)
+
+set "BROWSER=C:\Program Files\Google\Chrome\Application\chrome.exe"
+if not exist "%BROWSER%" set "BROWSER=C:\Program Files (x86)\Google\Chrome\Application\chrome.exe"
+if not exist "%BROWSER%" set "BROWSER=%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"
+if not exist "%BROWSER%" set "BROWSER=%ProgramFiles%\Microsoft\Edge\Application\msedge.exe"
+if not exist "%BROWSER%" (
+  echo [QC] Chrome/Edge not found. Edit the BROWSER line in this file.
   pause
   exit /b 1
 )
-echo 启动调试浏览器（端口 9222）...
-start "" %CHROME% --remote-debugging-port=9222 --remote-allow-origins=* --user-data-dir="%USERPROFILE%\qc-chrome" --no-first-run --no-default-browser-check --start-maximized "https://qianchuan.jinritemai.com/overall-prom"
-echo 已启动。登录千川并停在「全域投放 · 推直播间」列表，再运行 cruise.mjs。
+
+echo [QC] browser: %BROWSER%
+echo [QC] profile: %PROFILE%
+start "" "%BROWSER%" ^
+ --remote-debugging-port=%PORT% ^
+ --remote-allow-origins=* ^
+ --user-data-dir="%PROFILE%" ^
+ --no-first-run ^
+ --no-default-browser-check ^
+ --start-maximized ^
+ "https://qianchuan.jinritemai.com/login"
+
+echo [QC] waiting for port %PORT% ...
+for /l %%i in (1,1,40) do (
+  timeout /t 1 /nobreak >nul
+  curl -s -m 1 http://127.0.0.1:%PORT%/json/version >nul 2>&1
+  if not errorlevel 1 (
+    echo [QC] OK port %PORT% ready in %%i s
+    exit /b 0
+  )
+)
+echo [QC] FAILED: port not listening.
+echo [QC] Hint: close all other Chrome windows first (the profile is locked if Chrome runs).
+pause
+exit /b 1

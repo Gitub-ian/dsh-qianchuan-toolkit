@@ -27,7 +27,7 @@ const has = (k) => argv.includes('--' + k)
 const START = arg('start', '07:00')      // 每天开始
 const END = arg('end', '01:00')          // 次日收工
 const PLAN_ONLY = has('plan')
-const RETRY_MS = 5 * 60 * 1000
+const RETRY_MS = 30 * 1000
 
 const hm = (s) => { const m = String(s).match(/^(\d{1,2}):(\d{2})$/); if (!m) throw new Error('时间格式应为 HH:MM：' + s); return Number(m[1]) * 3600000 + Number(m[2]) * 60000 }
 const START_OFF = hm(START)
@@ -100,8 +100,16 @@ async function notifyWindowStart(w) {
 async function runOnce() {
   const args = ['--watch', '--max-rounds', '1000', '--until', END]
   log('启动巡航：hourly.mjs ' + args.join(' '))
-  const out = fs.openSync(path.join(HOME, 'watch.out.log'), 'a')
-  const child = spawn(process.execPath, [HOURLY, ...args], { stdio: ['ignore', out, out], env: { ...process.env, QC_HOME: HOME } })
+  let out = null
+  const logPath = path.join(HOME, 'watch.out.log')
+  for (let i = 0; i < 5 && out === null; i++) {
+    try { out = fs.openSync(logPath, 'a') } catch (e) {
+      log('打开 watch.out.log 失败（' + e.code + '）' + (i < 4 ? '，1 秒后重试' : '，改用带时间戳的日志'))
+      await sleep(1000)
+    }
+  }
+  if (out === null) { const alt = path.join(HOME, 'watch-' + Date.now() + '.out.log'); out = fs.openSync(alt, 'a'); log('改用日志文件 ' + alt) }
+  const child = spawn(process.execPath, [HOURLY, ...args], { stdio: ['ignore', out, out], env: { ...process.env, QC_HOME: HOME }, detached: true, windowsHide: true })
   log('巡航 pid ' + child.pid)
   const code = await new Promise((res) => child.on('exit', (c, s) => res(c == null ? -1 : c)))
   try { fs.closeSync(out) } catch { /* 忽略 */ }
@@ -115,7 +123,17 @@ if (PLAN_ONLY) {
   process.exit(0)
 }
 
-try { fs.writeFileSync(path.join(HOME, 'supervisor.pid'), String(process.pid)) } catch { /* 忽略 */ }
+try {
+  const pidFile = path.join(HOME, 'supervisor.pid')
+  let old = 0
+  try { old = Number(fs.readFileSync(pidFile, 'utf8').trim()) || 0 } catch { /* 无锁文件 */ }
+  if (old && old !== process.pid) {
+    let alive = false
+    try { process.kill(old, 0); alive = true } catch (e) { alive = e.code === 'EPERM' }
+    if (alive) { console.error('已有一个守夜进程在跑（pid ' + old + '），本次退出'); process.exit(4) }
+  }
+  fs.writeFileSync(pidFile, String(process.pid))
+} catch { /* 忽略 */ }
 process.on('exit', () => { try { if (String(fs.readFileSync(path.join(HOME, 'supervisor.pid'), 'utf8')).trim() === String(process.pid)) fs.unlinkSync(path.join(HOME, 'supervisor.pid')) } catch { /* 忽略 */ } })
 log('守夜进程启动：每天 ' + START + ' 开始，次日 ' + END + ' 收工（数据目录 ' + HOME + '）')
 ensureWatchdog()
@@ -138,6 +156,7 @@ for (;;) {
     await sleep(60000)
     continue
   }
-  log('异常退出（退出码 ' + code + '）且仍在窗口内，' + Math.round(RETRY_MS / 60000) + ' 分钟后重试')
+  const hex = '0x' + (code >>> 0).toString(16).toUpperCase()
+  log('异常退出（退出码 ' + code + ' / ' + hex + (hex === '0xC000013A' ? ' = 被 Ctrl+C 或控制台关闭终止' : '') + '）且仍在窗口内，' + Math.round(RETRY_MS / 1000) + ' 秒后重试')
   await sleep(RETRY_MS)
 }

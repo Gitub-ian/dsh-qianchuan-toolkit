@@ -1,5 +1,11 @@
 # 更新日志
 
+## 1.0.14
+
+- **统一浏览器启动器**：两个技能的 `scripts/start-qc.cmd` 现在逐字节相同 —— 先探 9222（已开则直接返回）→ 优先 Chrome、找不到再退 Edge → profile 统一 `%USERPROFILE%\qc-chrome` → 打开 `/login` 并等端口就绪（最多 40s）。修掉 live-control 旧启动器「打开 overall-prom 又不等待端口」的错位；仍是纯 ASCII + CRLF，双击不会闪退。
+- **文档去绝对路径**：plan-copy 的 `references/01-完整操作手册.md`、`references/04-浏览器会话.md` 里 `F:\AI办公\qc\...` 全部改成相对路径 / `%USERPROFILE%\qc-chrome`，换机器不再错。
+- **`cdp.mjs` 顶部加分工注释**：它是 plan-copy 的**手动批处理执行器**（`node cdp.mjs batch.json`），与 live-control 的 `cdp-lib.mjs`（巡航库）分工不同、不互相 import —— 防止以后被当成死代码删掉。
+- **新增 `assets/live-control/scripts/expr/manifest.json`**：21 个页面注入片段的用途、调用方、`{{占位符}}` 索引；新增片段请在此登记。
 ## 1.0.13
 
 - **再修看门狗误报（整点播报导致的）**：心跳里的 `nextAt` 可能是「醒来发整点播报」的时刻（00:00），发完播报后进程继续睡到 00:15，但心跳没更新 → 看门狗在 00:03 判 `heartbeat-stale` 误报。两处修：① 看门狗改为**优先看 `nextRound`**（真正的下一轮时间），只有没有 `nextRound` 时才退回 `nextAt`；② `hourly.mjs` 发完整点播报后立即重写心跳（`nextAt = nextRound = 下一轮`）。
@@ -17,6 +23,7 @@
 - **开工 与 收工日报**：守夜进程每个窗口只推一次「已开工（窗口 07:00 ~ 次日 01:00）」；`--until` 到点收工前推「收工日报」（本次轮次数、控量成功/失败、异常条数、下一窗口时间）。
 - 心跳由 `hourly.mjs` 每轮写入（含下一轮预计时间），看门狗据此判断是否卡死；`daily-supervisor.mjs` 负责拉起并每 2 分钟确认看门狗存活。
 - 调试：`node hourly.mjs --digest-now --no-send` 只渲染上个小时播报；`node watchdog.mjs --once` 只检查一次并打印结果。
+
 ## 1.0.10
 
 - **计划复制·批量跑通**：新增 `assets/plan-copy/scripts/capture.mjs`（按 ID 搜索 → 详情页抓抖音号/素材/ROI/预算/商品 → 生成 `qc/params-<原ID>.json`）。抖音号解析只取在投行（过滤「已删除」「无抖音号（仅含商城流量）」与计划行），aweme ID 支持 `_`/`.` 字符，修掉漏号与误取商品 ID。

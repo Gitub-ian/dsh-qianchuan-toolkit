@@ -1,3 +1,7 @@
+// plan-copy 通用 CDP 执行器（手动批处理）：node cdp.mjs <batch.json>
+// 工作流入口见 references/01-完整操作手册.md 第 1.3 节；gen-batch11.mjs 负责生成它吃的 batch.json。
+// 与 assets/live-control/scripts/cdp-lib.mjs 的分工：cdp-lib 是巡航库（被 hourly/control 等 import），
+// 本文件是手动跑批的命令行工具。两者不通用、不要互相 import；删除本文件会破坏文档化工作流。
 import fs from 'node:fs'
 const PORT = process.env.CDP_PORT || 9222
 const BASE = 'http://127.0.0.1:' + PORT

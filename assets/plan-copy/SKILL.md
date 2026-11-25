@@ -1,6 +1,6 @@
 # 千川乘方「复制计划」技能包
 
-> **资源位置**：本技能的资源基目录下有 `scripts/`（cdp.mjs、copy.mjs、capture.mjs、gen-batch11.mjs、pick-all.mjs、notify-media.mjs、start-qc.cmd）与 `references/`（完整手册、界面结构、弹窗处理、浏览器会话）。下文出现的 `scripts/xxx.mjs` 都相对这个基目录；截图与记录可以写到任意工作目录，建议统一放一个 `qc/` 目录。
+> **资源位置**：本技能的资源基目录下有 `scripts/`（cdp.mjs、copy.mjs、capture.mjs、gen-batch11.mjs、pick-all.mjs、notify-media.mjs、start-qc.cmd）与 `references/`（完整手册、界面结构、弹窗处理、浏览器会话）。其中 `cdp.mjs` 是**手动批处理执行器**（`node cdp.mjs batch.json`），巡航库是另一个技能里的 `../live-control/scripts/cdp-lib.mjs`，两者分工不同、不要互相 import。下文出现的 `scripts/xxx.mjs` 都相对这个基目录；截图与记录可以写到任意工作目录，建议统一放一个 `qc/` 目录。
 >
 > **运行环境**：Windows 或 macOS；Microsoft Edge / Google Chrome 任一（用 `--remote-debugging-port=9222` 开调试端口）；Node 18+，脚本零第三方依赖。**不要假设用户用的是哪个浏览器、哪个 profile、哪个千川账户**——1.1 和 1.2 会先探测再动手。
 

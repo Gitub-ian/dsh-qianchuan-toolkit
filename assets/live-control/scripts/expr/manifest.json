@@ -1,0 +1,213 @@
+{
+  "note": "assets/live-control/scripts/expr/ 的页面注入片段索引。每个 .js 都是一段自包含表达式，由 expr-util.mjs 读取并做 {{占位符}} 替换后交给 CDP Runtime.evaluate；新增片段请在此登记。",
+  "snippets": [
+    {
+      "name": "account-info",
+      "file": "expr/account-info.js",
+      "purpose": "读页头账号名与 ID，并列出页面上出现过的账户 ID（切账号校验用）",
+      "usedBy": [
+        "account-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "admap-head",
+      "file": "expr/admap-head.js",
+      "purpose": "从详情页文本里取「计划ID / 抖音号ID / 抖音号」（详情页 → 列表行的 adId 映射）",
+      "usedBy": [
+        "hourly.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "cancel-modal",
+      "file": "expr/cancel-modal.js",
+      "purpose": "关闭含「调控方式」的控量弹窗（点取消）",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "close-dialog",
+      "file": "expr/close-dialog.js",
+      "purpose": "同上但更宽松：弹窗存在则点「取消」，返回 none/no-cancel/canceled",
+      "usedBy": [
+        "hourly.mjs",
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "dialog-open",
+      "file": "expr/dialog-open.js",
+      "purpose": "判断控量弹窗是否已出现",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "dismiss-overlays",
+      "file": "expr/dismiss-overlays.js",
+      "purpose": "关掉推广/升级/引导类弹窗，绝不碰含「调控方式」的业务弹窗",
+      "usedBy": [
+        "page-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "fill",
+      "file": "expr/fill.js",
+      "purpose": "在控量弹窗里填「调控总预算」「调控时长」",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "hourly-data",
+      "file": "expr/hourly-data.js",
+      "purpose": "读分时数据：当前小时消耗 / 净成交金额 / 净成交 ROI（statQuery 分时表）",
+      "usedBy": [
+        "hourly.mjs"
+      ],
+      "placeholders": [
+        "{{ADV}}",
+        "{{ADS}}"
+      ]
+    },
+    {
+      "name": "nav-click",
+      "file": "expr/nav-click.js",
+      "purpose": "点顶部产品线导航（全域投放 / 乘方）；千川 SPA 改 URL 不可靠",
+      "usedBy": [
+        "account-lib.mjs"
+      ],
+      "placeholders": [
+        "{{PRODUCT}}"
+      ]
+    },
+    {
+      "name": "open-plus",
+      "file": "expr/open-plus.js",
+      "purpose": "点「一键调速」组的 + 打开控量弹窗；组里已有 ⏸ 则返回 PAUSE_RUNNING",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": [
+        "{{AWEME}}"
+      ]
+    },
+    {
+      "name": "page-state",
+      "file": "expr/page-state.js",
+      "purpose": "页面就绪探针：readyState / body / 可见遮罩与 loading",
+      "usedBy": [
+        "page-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "pause-info",
+      "file": "expr/pause-info.js",
+      "purpose": "点 ⏸ 读出控量预算与「控量时间 start ~ end」，只关窗不提交",
+      "usedBy": [
+        "hourly.mjs"
+      ],
+      "placeholders": [
+        "{{AWEME}}"
+      ]
+    },
+    {
+      "name": "pick",
+      "file": "expr/pick.js",
+      "purpose": "在列表里按抖音号命中行并点 +（坐标点击，DOM 点击兜底在 open-plus）",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": [
+        "{{AWEME}}"
+      ]
+    },
+    {
+      "name": "plan-log",
+      "file": "expr/plan-log.js",
+      "purpose": "切到计划详情「日志」tab，取最近 8 条操作记录（核对控量是否落库）",
+      "usedBy": [
+        "hourly.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "plus-rect",
+      "file": "expr/plus-rect.js",
+      "purpose": "+ 按钮坐标（坐标兜底路径用）",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": [
+        "{{AWEME}}"
+      ]
+    },
+    {
+      "name": "result",
+      "file": "expr/result.js",
+      "purpose": "提交后的结果探针：toast 文本 + 控量弹窗是否消失",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "row-mode",
+      "file": "expr/row-mode.js",
+      "purpose": "只看一行「一键调速」组的图标 → plus / pause / unknown / norow",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": [
+        "{{AWEME}}"
+      ]
+    },
+    {
+      "name": "row-state",
+      "file": "expr/row-state.js",
+      "purpose": "列表整体状态：表头就绪、每行抖音号/状态/调控工具 mode、是否在投/未开播",
+      "usedBy": [
+        "hourly.mjs",
+        "account-lib.mjs",
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "submit-dom",
+      "file": "expr/submit-dom.js",
+      "purpose": "DOM 点击弹窗里的「提交」按钮（不依赖坐标，首选路径）",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "submit-rect",
+      "file": "expr/submit-rect.js",
+      "purpose": "「提交」按钮坐标（坐标兜底路径用）",
+      "usedBy": [
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    },
+    {
+      "name": "tab",
+      "file": "expr/tab.js",
+      "purpose": "切「推直播间」tab；只有最内层 span.tab-label 的 click 有效",
+      "usedBy": [
+        "account-lib.mjs",
+        "control-lib.mjs"
+      ],
+      "placeholders": []
+    }
+  ]
+}

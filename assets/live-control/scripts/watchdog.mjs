@@ -121,7 +121,7 @@ async function check() {
   const fixed = []
   if (issues.some((x) => x.kind === 'supervisor-dead')) { const pid = startSupervisor(); if (pid) fixed.push('守夜进程已重启（pid ' + pid + '）') }
   if (!cdp) fixed.push('请双击 start-qc.cmd 重新打开 Chrome 并登录千川')
-  if (issues.some((x) => x.kind === 'watch-dead') && alive(supPid)) fixed.push('守夜进程会自动重拉巡航（最多 5 分钟）')
+  if (issues.some((x) => x.kind === 'watch-dead') && alive(supPid)) fixed.push('守夜进程会自动重拉巡航（最多 30 秒）')
 
   const title = '🚨【巡航看门狗】' + (issues.some((x) => x.kind === 'cdp-down' || x.kind === 'supervisor-dead') ? '巡航已中断' : '巡航可能卡住')
   const text = ['检查时间：' + new Date(now).toLocaleString('zh-CN'), ...issues.map((x) => '• ' + x.msg), ...(fixed.length ? ['', '已处理：', ...fixed.map((s) => '• ' + s)] : []), hb && hb.round ? '最后成功轮次：第 ' + hb.round + ' 轮（' + new Date(hb.ts).toLocaleString('zh-CN') + '）' : ''].filter(Boolean).join('\n')
