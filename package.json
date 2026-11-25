@@ -1,6 +1,6 @@
 {
   "name": "dsh-qianchuan-toolkit",
-  "version": "1.0.14",
+  "version": "1.0.15",
   "type": "module",
   "description": "DSH skill bundle for 巨量千川: 直播盯盘自动控量 (qianchuan-live-control) + 乘方计划复制 (qianchuan-plan-copy).",
   "license": "MIT",

@@ -552,6 +552,7 @@ async function executeAccount(group, rec) {
 // 心跳：每轮写入 heartbeat.json，看门狗据 nextAt 判断是否卡死
 const HB_FILE = path.join(P.home, 'heartbeat.json')
 function writeHeartbeat(o) {
+  if (DRY) return // dry-run 不写心跳：否则会把线上心跳覆盖成「下一轮=0」，看门狗必误报
   try { fs.mkdirSync(P.home, { recursive: true }); fs.writeFileSync(HB_FILE, JSON.stringify({ ts: new Date().toISOString(), pid: process.pid, ...o })) } catch (e) { /* 心跳失败不影响巡航 */ }
 }
 function hourStartOf(t = Date.now()) { const d = new Date(t); d.setMinutes(0, 0, 0); return d.getTime() }
@@ -737,7 +738,7 @@ try {
       for (const d of rec.decisions) if (d.decision.endAt) extras.push(new Date(d.decision.endAt).getTime() + 60000)
     }
     for (const rec of recs) { delete rec._group }
-    jl(P.rounds, { ts: new Date().toISOString(), round: i, ms: Date.now() - roundStart, accounts: recs })
+    if (!DRY) jl(P.rounds, { ts: new Date().toISOString(), round: i, ms: Date.now() - roundStart, accounts: recs })
     writeHeartbeat({ round: i, ms: Date.now() - roundStart, nextAt: 0 })
     log('本轮耗时 ' + ((Date.now() - roundStart) / 1000).toFixed(1) + 's')
     const nodes = [...new Set(groups.flatMap((g) => g.targets.flatMap((t) => resolveRule(cfg, t).nodes)))].sort((a, b) => a - b)
@@ -789,4 +790,4 @@ try {
 } finally {
   for (const p of pageByKey.values()) p.close()   // 只断 WS，标签页留着给下一轮/下一账号用
 }
-log('完成。埋点：' + P.rounds)
+log(DRY ? '完成（dry-run：不写 rounds/heartbeat，不影响线上心跳）' : '完成。埋点：' + P.rounds)

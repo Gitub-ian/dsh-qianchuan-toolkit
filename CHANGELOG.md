@@ -1,5 +1,9 @@
 # 更新日志
 
+## 1.0.15
+
+- **修 dry-run 污染线上状态（真事故）**：`hourly.mjs --once --dry-run` 会往 `rounds.jsonl` 追加一条 `round:1` 记录，并把 `heartbeat.json` 覆盖成 `pid=本次进程, nextRound=0` —— 12:16 的回归测试就这么干了，看门狗 12:23 报了一次「🚨 巡航可能卡住」（**误报**）。现在 dry-run 完全不写心跳、不写 rounds（`writeHeartbeat` 首行 `if (DRY) return`；rounds 写入加 `if (!DRY)`），收尾日志也改成「完成（dry-run：不写 rounds/heartbeat…）」。已清理被污染的那条记录（`rounds.jsonl.bak-20261125-1226` 留底），心跳已按第 12 轮真实值恢复。
+- 复测：dry-run 前后 `rounds.jsonl` 452 行不变、`heartbeat.json` mtime 不变。
 ## 1.0.14
 
 - **统一浏览器启动器**：两个技能的 `scripts/start-qc.cmd` 现在逐字节相同 —— 先探 9222（已开则直接返回）→ 优先 Chrome、找不到再退 Edge → profile 统一 `%USERPROFILE%\qc-chrome` → 打开 `/login` 并等端口就绪（最多 40s）。修掉 live-control 旧启动器「打开 overall-prom 又不等待端口」的错位；仍是纯 ASCII + CRLF，双击不会闪退。
