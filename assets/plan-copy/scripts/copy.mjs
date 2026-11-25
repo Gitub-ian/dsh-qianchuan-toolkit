@@ -8,7 +8,9 @@ import path from 'node:path';
 import { pickAllOnTarget } from './pick-all.mjs';
 import { connect, sleep, listPages, browserSend } from '../../live-control/scripts/cdp-lib.mjs';
 
-const W = 'C:/Users/admin/Documents/deepseek-harness/default-workspace';
+// 确认单/截图落盘根目录：默认当前工作目录（可移植），需要固定位置时用 QC_WORKDIR 指定。
+// confirm 与 delete 必须在同一个 QC_WORKDIR 下运行，否则找不到确认单。
+const W = process.env.QC_WORKDIR || process.cwd();
 
 // ---------- 删除前确认单（硬闸门）----------
 // 规则（用户 2026-11-20 定）：删除前必须把「搜索该计划 ID 后的单条计划截图」原文发给用户并等其确认；
@@ -22,7 +24,7 @@ const t0 = Date.now();
 let LAST = 'init';
 const mark = (l, e) => { LAST = l; console.log('[' + ((Date.now() - t0) / 1000).toFixed(1) + 's] ' + l + (e ? ' ' + e : '')); };
 // 看门狗：任何一步卡住都会打印最后一步并退出，避免静默长跑（默认 150s，可用 QC_WATCHDOG 覆盖）
-setTimeout(() => { console.log('[WATCHDOG] 卡在 ' + LAST + '，强制退出'); process.exit(9) }, Number(process.env.QC_WATCHDOG || 150000));
+setTimeout(() => { console.log('[WATCHDOG] 卡在 ' + LAST + '，强制退出'); process.exit(9) }, Number(process.env.QC_WATCHDOG || (process.argv[2] === "all" ? 900000 : 150000)));
 
 // ---------- 通用自愈：关掉标签页重开 ----------
 // 用户 2026-11-21 确认：大多数异常（「添加视频」弹层跑到视口外、抽屉/搜索卡住）关闭标签页重开就能解决。
@@ -444,37 +446,48 @@ async function cmdMaterials() {
   mark('result', JSON.stringify({ totalVideos: res.totalVideos, submitted: res.submitted, picktest: process.argv.includes('--picktest') }));
 }
 
-// 一条龙：新建 → 发布 → 找新计划ID → 详情抽屉加素材
-async function cmdAll() {
-  const aavid = process.argv[3], paramsFile = process.argv[4];
-  const argv0 = process.argv.slice(0, 2);
-  process.argv = argv0.concat(['create', aavid, paramsFile]);
-  await cmdCreate();
-  process.argv = argv0.concat(['publish']);
-  await cmdPublish();
-  const page = await connectFor(aavid);
-  await page.eval(INJECT);
-  const wantName = JSON.parse(fs.readFileSync(paramsFile, 'utf8')).planName;
-  let newId = null, topRow = '';
-  for (let i = 0; i < 5; i++) {
-    try {
-      const p3 = await connectFor(aavid);
-      await p3.send('Page.navigate', { url: listUrl }, 20000);
-    } catch (e) { mark('list-nav-err', String(e.message).slice(0, 60)) }
-    await sleep(8000);
-    try {
-      const p4 = await connectFor(aavid);
-      newId = await newestPlanId(p4);
-      topRow = await p4.eval('(() => { const tr = document.querySelector("tbody tr"); return tr ? (tr.innerText || "").replace(/\\s+/g, " ").trim() : "" })()');
-    } catch (e) { newId = null; topRow = '' }
-    if (newId && String(topRow).indexOf(wantName) >= 0) break;
-    mark('new-plan-retry', i + ' ' + String(topRow).slice(0, 40));
+// 一条龙：新建 → 发布 → 等 10s → 按计划名搜到新计划 → 详情抽屉加素材
+async function searchByName(page, name) {
+  for (let i = 1; i <= 3; i++) {
+    await focusAndType(page, PLAN_SEARCH, name)
+    await sleep(700)
+    await pressEnter(page)
+    const ok = await wait(page, '(() => { const trs=[...document.querySelectorAll("tbody tr")].filter(r=>(r.innerText||"").indexOf("ID：")>=0); return trs.length===1 && (trs[0].innerText||"").indexOf(' + JSON.stringify(name) + ')>=0 })()', i === 1 ? 8000 : 5000)
+    if (ok) return true
+    await sleep(800)
   }
-  if (!newId) throw new Error('发布后拿不到新计划 ID');
-  if (String(topRow).indexOf(wantName) < 0) throw new Error('列表首行不是刚建的计划（首行=' + String(topRow).slice(0, 60) + ' 期望=' + wantName + '）');
-  mark('new-plan', newId + ' ' + wantName);
-  process.argv = argv0.concat(['materials', aavid, newId, paramsFile]);
-  await cmdMaterials();
+  return false
+}
+
+async function cmdAll() {
+  const aavid = process.argv[3], paramsFile = process.argv[4]
+  const argv0 = process.argv.slice(0, 2)
+  process.argv = argv0.concat(['create', aavid, paramsFile])
+  await cmdCreate()
+  process.argv = argv0.concat(['publish'])
+  await cmdPublish()
+  const wantName = JSON.parse(fs.readFileSync(paramsFile, 'utf8')).planName
+  // 用户 2026-11-25 要求：发布后立刻按计划名搜新计划，没出现就 2s 后重搜（只等网络/加载延迟，不空等固定秒数）
+  await sleep(800)
+  const page = await connectFor(aavid)
+  await page.eval(INJECT)
+  await openList(page, aavid)
+  await dismissBubbles(page)
+  mark('list-ready')
+  let newId = null, rowText = ''
+  for (let i = 0; i < 12 && !newId; i++) {
+    const hit = await searchByName(page, wantName)
+    rowText = await page.eval('(() => { const trs=[...document.querySelectorAll("tbody tr")].filter(r=>(r.innerText||"").indexOf("ID：")>=0); return trs.length ? trs[0].innerText.replace(/\s+/g," ").trim() : "" })()')
+    const m = String(rowText).match(/ID[:：]\s*(\d{10,})/)
+    if (hit && m) newId = m[1]
+    else { mark('new-plan-retry', i + ' ' + String(rowText).slice(0, 50)); await sleep(2000) }
+  }
+  if (!newId) { try { newId = await newestPlanId(page) } catch (e) {} }
+  if (!newId) throw new Error('发布后拿不到新计划 ID（按名字搜也没有）')
+  if (String(rowText).indexOf(wantName) < 0) throw new Error('搜到的不是刚建的计划（行=' + String(rowText).slice(0, 60) + ' 期望=' + wantName + '）')
+  mark('new-plan', newId + ' ' + wantName)
+  process.argv = argv0.concat(['materials', aavid, newId, paramsFile])
+  await cmdMaterials()
 }
 
 async function cmdPublish() {

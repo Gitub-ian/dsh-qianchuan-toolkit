@@ -46,8 +46,9 @@
 
 ## 附：已知脚本缺陷（技术备忘，非守则）
 
-- `plan-copy/scripts/pick-all.mjs`：~~补点 = 取消勾选~~ **已在 1.0.18 修复**。旧版靠「已选择 N/200」计数补点，计数刷新慢就二次点击同一张卡（开关式复选框 → 取消勾选）；现改为先读该卡自身是否已选中（`isSel`）：已选中的绝不点，只对明确未选中的补一次，判断不出的只记 `unknown[]` 不再补点。
-- `copy.mjs materials` 在本机卡 `[75.7s] popup`，watchdog 600s 强退（exit 9）；素材仍按一波流：一个弹窗、全号从上到下勾完、只点一次「确定」。
+- plan-copy/scripts/pick-all.mjs：补点=取消勾选 已在 1.0.18 修复；漏勾第二屏 已在 1.0.19 修复。旧版对「视口外的卡」直接记 skipped 跳过（没有滚动这一步），14 个号只勾到 110/135。现在点完一屏后自动把素材弹窗的滚动容器推一屏再点，最多 10 轮；跑完 skipped 应为 0，不为 0 就必须带 chainInfo 如实汇报。
+- copy.mjs all：创编后找新计划 ID 的 -32602 空转 已在 1.0.19 修复（Page.navigate 漏传 aavid）；现在发布后固定等 10s → 按计划名搜索 → 读行内 ID → 直接进详情加素材，不再 5 次 x 8s 重试。
+- copy.mjs materials 之前在本机卡在 [75.7s] popup，1.0.19 实测 90s 跑完不卡；若再次卡住按守则重开标签页重试后仍失败即报。
 
 ---
 
@@ -411,7 +412,10 @@ node scripts/pick-all.mjs "抖音号名1,抖音号名2,...,抖音号名N"
 | `scripts/capture.mjs` | 按计划 ID 抓参数（详情页抖音号/素材/ROI/预算/商品）→ 生成 `qc/params-<原ID>.json`，供 copy.mjs 直接使用 |
 | `scripts/copy.mjs` | 一条龙：`confirm`（删除前确认单+截图推送）→ `delete <TOKEN>` → `all`（新建+发布+找新ID+加素材）；另有 `create/publish/materials/search/click` 子命令 |
 | `scripts/notify-media.mjs` | 确认图推送 QQ 官方机器人 + 企业微信（copy.mjs confirm 自动调用） |
+| `scripts/readmat.mjs` | 读「添加视频」弹窗当前勾选状态（每号卡片数/已选数），供素材阶段核对 |
 | `scripts/start-qc.cmd` | 双击启动 Edge（9222 + 固定 profile） |
+
+> **落盘位置**：确认单与删除前截图写在 `$QC_WORKDIR/qc/`（`QC_WORKDIR` 不设时用当前工作目录）。`confirm` 与 `delete` 必须在同一目录/同一 `QC_WORKDIR` 下执行，否则 delete 会以「没有确认单」拒绝；跨会话协作时两边各自指向自己的工作区即可，互不弹授权。
 
 用法示例：
 

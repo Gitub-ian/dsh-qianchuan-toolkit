@@ -72,27 +72,41 @@ async function pollCards(c, maxMs) {
 }
 
 async function selectCards(c, ids) {
-  let clicked = 0, retried = 0, skipped = 0, already = 0, why = null
+  // 多轮：不在可视区的卡（弹窗第二屏 / 横向滚动区外）先滚动让它进视野，下一轮再点，直到全部点完 —— 不允许静默 skipped
+  let clicked = 0, retried = 0, already = 0
   const unknown = []
-  for (const id of ids) {
-    const p = await ev(c, cardPos(id))
-    if (!p || p.err || typeof p.x !== 'number') { skipped++; if (!why && p && p.err === 'noclick') why = JSON.stringify(await ev(c, chainInfo(id))); else why = why || (p && (p.err || 'bad')) + ' ' + JSON.stringify(p); continue }
-    await sleep(120)
-    // 已经勾上的卡绝不点：开关式复选框，二次点击=取消勾选（旧版靠「已选择 N/200」补点，计数刷新慢就会自己取消掉）
-    if ((await ev(c, isSel(id))) === 1) { already++; continue }
-    await click(c, p.x, p.y)
-    clicked++
-    let st = await waitSel(c, id, 1200)
-    if (st !== 1) {
-      if (st === 0) {
-        const p2 = await ev(c, cardPos(id))
-        if (p2 && typeof p2.x === 'number' && (await ev(c, isSel(id))) === 0) { await click(c, p2.x, p2.y); retried++; st = await waitSel(c, id, 1200) }
+  let pending = ids.slice()
+  for (let pass = 0; pass < 10 && pending.length; pass++) {
+    const next = []
+    for (const id of pending) {
+      const p = await ev(c, cardPos(id))
+      if (!p || p.err || typeof p.x !== 'number') { next.push(id); continue }
+      await sleep(120)
+      // 已经勾上的卡绝不点：开关式复选框，二次点击=取消勾选
+      if ((await ev(c, isSel(id))) === 1) { already++; continue }
+      await click(c, p.x, p.y)
+      clicked++
+      let st = await waitSel(c, id, 1200)
+      if (st !== 1) {
+        if (st === 0) {
+          const p2 = await ev(c, cardPos(id))
+          if (p2 && typeof p2.x === 'number' && (await ev(c, isSel(id))) === 0) { await click(c, p2.x, p2.y); retried++; st = await waitSel(c, id, 1200) }
+        }
+        if (st !== 1) unknown.push(id)
       }
-      if (st !== 1) unknown.push(id)
     }
+    if (!next.length) { pending = []; break }
+    for (let k = 0; k < 2; k++) { await ev(c, scrollStep); await sleep(450) }
+    pending = next
   }
+  let why = null
+  const skipped = pending.length
+  if (skipped) { try { why = JSON.stringify(await ev(c, chainInfo(pending[0]))) } catch (e) { why = 'chainInfo-fail' } }
   return { clicked, retried, skipped, already, unknown, why }
 }
+
+// 让素材弹窗里的滚动容器往前走一屏（横向那一排卡在第 2 屏，只点视口内的卡必然漏）
+const scrollStep = '(()=>{const roots=[...document.querySelectorAll("[class*=create-material]")];const els=new Set();for(const r of roots){let a=r;for(let i=0;i<8&&a;i++,a=a.parentElement)els.add(a)}let n=0;for(const el of els){if(el===document.body||el===document.documentElement)continue;const rc=el.getBoundingClientRect();if(!rc||rc.width<10)continue;const s=getComputedStyle(el);if((s.overflowX==="auto"||s.overflowX==="scroll")&&el.scrollWidth>el.clientWidth+4){el.scrollLeft=Math.min(el.scrollLeft+Math.round(el.clientWidth*0.8),el.scrollWidth-el.clientWidth);n++}if((s.overflowY==="auto"||s.overflowY==="scroll")&&el.scrollHeight>el.clientHeight+4&&el.clientHeight>200){el.scrollTop=Math.min(el.scrollTop+Math.round(el.clientHeight*0.6),el.scrollHeight-el.clientHeight);n++}}return n})()'
 
 // 供 copy.mjs 复用：在已打开的「添加视频」弹窗里按名单逐个抖音号全选，返回结构化日志
 export async function pickAllOnTarget(target, names) {
