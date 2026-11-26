@@ -10,15 +10,18 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const PORT = process.env.CDP_PORT || 9222
-const BASE = 'http://127.0.0.1:' + PORT
+// 调试端口：默认 9222（巡航用的浏览器实例）。plan-copy 技能用 9223 独立实例，
+// 由各 plan-copy 脚本在 import 之后设置 QC_CDP_PORT=9223 —— 所以必须惰性读取，
+// 不能在模块加载时求值（那时 env 还没被设置）。
+export function cdpPort() { return Number(process.env.QC_CDP_PORT || process.env.CDP_PORT || 9222) }
+const base = () => 'http://127.0.0.1:' + cdpPort()
 const SEND_TIMEOUT = Number(process.env.CDP_SEND_TIMEOUT_MS || 20000)
 const EVAL_TIMEOUT = Number(process.env.CDP_EVAL_TIMEOUT_MS || 15000)
 
 export class CdpError extends Error {}
 
 async function getJson(p) {
-  const r = await fetch(BASE + p)
+  const r = await fetch(base() + p)
   if (!r.ok) throw new CdpError('http ' + r.status + ' ' + p)
   return r.json()
 }
@@ -27,7 +30,11 @@ export async function listPages() {
   try {
     return await getJson('/json/list')
   } catch (err) {
-    throw new CdpError('连不上调试端口 ' + PORT + '（' + ((err && err.message) || err) + '）—— 请先手动启动浏览器：双击 assets/scripts/start-qc.cmd，登录千川并停在「全域投放 · 推直播间」列表页')
+    const p = cdpPort()
+    const hint = p === 9223
+      ? 'assets/plan-copy/scripts/start-qc-copy.cmd（复制专用实例，首次要登录一次千川）'
+      : (p === 9222 ? 'assets/plan-copy/scripts/start-qc.cmd（巡航实例）' : '用同样的浏览器参数启动调试端口 ' + p)
+    throw new CdpError('连不上调试端口 ' + p + '（' + ((err && err.message) || err) + '）—— 请先手动启动浏览器：双击 ' + hint)
   }
 }
 

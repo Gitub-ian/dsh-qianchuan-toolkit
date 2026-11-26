@@ -1,4 +1,6 @@
 import { connect, sleep, listPages } from '../../live-control/scripts/cdp-lib.mjs'
+// 复制技能固定连 9223 的独立浏览器实例（与 9222 的巡航实例物理隔离，互不抢标签）。
+process.env.QC_CDP_PORT = process.env.QC_CDP_PORT || '9223';
 const A = process.argv[2], ID = process.argv[3]
 const pages = await listPages()
 const hit = pages.find(p => p.type==='page' && (p.url||'').indexOf('overall-prom')>=0 && (p.url||'').indexOf(A)>=0)

@@ -1,5 +1,12 @@
 # 更新日志
 
+## 1.0.22
+
+- **复制与巡航物理隔离（用户 2026-11-26 决定，方案 D）**：复制技能改用**独立的浏览器实例** —— 端口 `9223`、profile `%USERPROFILE%\qc-chrome-copy`，与巡航的 `9222` / `%USERPROFILE%\qc-chrome` 完全分开，两边标签页不再互相抢。
+- 新增 `assets/plan-copy/scripts/start-qc-copy.cmd`（纯 ASCII + CRLF）：双击启动 9223 实例并打开千川登录页；首次需要在这个窗口单独登录一次，登录态存在 `qc-chrome-copy` 里。
+- `cdp-lib.mjs` 端口改为惰性读取 `QC_CDP_PORT`（默认 9222），并新增导出 `cdpPort()`；连不上时的报错会按端口提示到底该双击哪个启动器。
+- 所有 plan-copy 入口脚本（`copy.mjs`、`capture.mjs`、`readmat.mjs`、`pick-all.mjs`、`cdp.mjs`）默认 `QC_CDP_PORT=9223`，巡航脚本不设该变量、继续走 9222。可用同名环境变量覆盖。
+- 文档：`SKILL.md` 前置检查/脚本表、`references/04-浏览器会话.md`、`references/01-完整操作手册.md` 同步为「双实例」说明。
 ## 1.0.21
 
 - **`copy.mjs` 落盘根目录可配置（修硬编码作者路径）**：原第 11 行写死 `const W = 'C:/Users/admin/Documents/deepseek-harness/default-workspace'`，确认单（`qc/confirm/<计划ID>.json`）与删除前截图（`qc/confirm-<计划ID>.png`）只能写到这台机器这个目录 —— 换会话/换工作区就必然跨沙箱，每次 confirm/delete 弹一次授权；对 npm 用户则是「往不存在的 `C:\Users\admin` 写文件」。现改为 `const W = process.env.QC_WORKDIR || process.cwd()`：默认落在当前工作目录，需要固定位置时用 `QC_WORKDIR` 指定。**confirm 与 delete 必须在同一 QC_WORKDIR 下运行**，否则按「没有确认单」安全拒绝。

@@ -1,8 +1,8 @@
 # 千川乘方「复制计划」技能包
 
-> **资源位置**：本技能的资源基目录下有 `scripts/`（cdp.mjs、copy.mjs、capture.mjs、gen-batch11.mjs、pick-all.mjs、notify-media.mjs、start-qc.cmd）与 `references/`（完整手册、界面结构、弹窗处理、浏览器会话）。其中 `cdp.mjs` 是**手动批处理执行器**（`node cdp.mjs batch.json`），巡航库是另一个技能里的 `../live-control/scripts/cdp-lib.mjs`，两者分工不同、不要互相 import。下文出现的 `scripts/xxx.mjs` 都相对这个基目录；截图与记录可以写到任意工作目录，建议统一放一个 `qc/` 目录。
+> **资源位置**：本技能的资源基目录下有 `scripts/`（cdp.mjs、copy.mjs、capture.mjs、gen-batch11.mjs、pick-all.mjs、notify-media.mjs、start-qc.cmd、start-qc-copy.cmd）与 `references/`（完整手册、界面结构、弹窗处理、浏览器会话）。其中 `cdp.mjs` 是**手动批处理执行器**（`node cdp.mjs batch.json`），巡航库是另一个技能里的 `../live-control/scripts/cdp-lib.mjs`，两者分工不同、不要互相 import。下文出现的 `scripts/xxx.mjs` 都相对这个基目录；截图与记录可以写到任意工作目录，建议统一放一个 `qc/` 目录。
 >
-> **运行环境**：Windows 或 macOS；Microsoft Edge / Google Chrome 任一（用 `--remote-debugging-port=9222` 开调试端口）；Node 18+，脚本零第三方依赖。**不要假设用户用的是哪个浏览器、哪个 profile、哪个千川账户**——1.1 和 1.2 会先探测再动手。
+> **运行环境**：Windows 或 macOS；Microsoft Edge / Google Chrome 任一（巡航用 `9222`，复制用 `9223` 独立实例，互不干扰）；Node 18+，脚本零第三方依赖。**不要假设用户用的是哪个浏览器、哪个 profile、哪个千川账户**——1.1 和 1.2 会先探测再动手。
 
 按本文件逐步执行，不需要重新探索界面。**所有坐标都是 CSS 像素**（截图坐标 ÷ devicePixelRatio）。
 
@@ -69,6 +69,7 @@
 curl -s http://127.0.0.1:9222/json/version
 ```
 
+- **复制技能连的是 9223**（独立浏览器实例，与巡航的 9222 物理隔离）：`curl -s http://127.0.0.1:9223/json/version`。没开就双击 `scripts/start-qc-copy.cmd`，首次需在该窗口单独登录一次千川（登录态存在 `%USERPROFILE%\qc-chrome-copy`）。两个实例可以同时开，各用各的标签页，不会互相抢。
 - 返回 `Browser: Edg/...` 或 `Chrome/...` → 已可用，直接进入 1.2
 - **连不上**时按下面顺序处理，不要默认"一定是 Edge 在某个固定路径"：
 
@@ -413,7 +414,8 @@ node scripts/pick-all.mjs "抖音号名1,抖音号名2,...,抖音号名N"
 | `scripts/copy.mjs` | 一条龙：`confirm`（删除前确认单+截图推送）→ `delete <TOKEN>` → `all`（新建+发布+找新ID+加素材）；另有 `create/publish/materials/search/click` 子命令 |
 | `scripts/notify-media.mjs` | 确认图推送 QQ 官方机器人 + 企业微信（copy.mjs confirm 自动调用） |
 | `scripts/readmat.mjs` | 读「添加视频」弹窗当前勾选状态（每号卡片数/已选数），供素材阶段核对 |
-| `scripts/start-qc.cmd` | 双击启动 Edge（9222 + 固定 profile） |
+| `scripts/start-qc.cmd` | 双击启动调试浏览器（9222 + `%USERPROFILE%\qc-chrome`，巡航实例） |
+| `scripts/start-qc-copy.cmd` | 双击启动**复制专用**调试浏览器（9223 + `%USERPROFILE%\qc-chrome-copy`，与巡航实例物理隔离；首次需单独登录千川） |
 
 > **落盘位置**：确认单与删除前截图写在 `$QC_WORKDIR/qc/`（`QC_WORKDIR` 不设时用当前工作目录）。`confirm` 与 `delete` 必须在同一目录/同一 `QC_WORKDIR` 下执行，否则 delete 会以「没有确认单」拒绝；跨会话协作时两边各自指向自己的工作区即可，互不弹授权。
 

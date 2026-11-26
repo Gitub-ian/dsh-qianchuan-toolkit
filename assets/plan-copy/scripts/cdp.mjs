@@ -3,7 +3,9 @@
 // 与 assets/live-control/scripts/cdp-lib.mjs 的分工：cdp-lib 是巡航库（被 hourly/control 等 import），
 // 本文件是手动跑批的命令行工具。两者不通用、不要互相 import；删除本文件会破坏文档化工作流。
 import fs from 'node:fs'
-const PORT = process.env.CDP_PORT || 9222
+// 复制技能固定连 9223 的独立浏览器实例（与 9222 的巡航实例物理隔离，互不抢标签）。
+process.env.QC_CDP_PORT = process.env.QC_CDP_PORT || '9223'
+const PORT = Number(process.env.QC_CDP_PORT || process.env.CDP_PORT || 9222)
 const BASE = 'http://127.0.0.1:' + PORT
 
 async function j(path) {

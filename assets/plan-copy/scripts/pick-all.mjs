@@ -14,7 +14,9 @@ import { pathToFileURL } from 'node:url'
 //   5) 全部号点完，一次性点「确定」提交；不再二次进弹窗、不再翻抽屉核对
 import fs from 'node:fs'
 
-const PORT = 9222, BASE = 'http://127.0.0.1:' + PORT
+// 复制技能固定连 9223 的独立浏览器实例（与 9222 的巡航实例物理隔离，互不抢标签）。
+process.env.QC_CDP_PORT = process.env.QC_CDP_PORT || '9223'
+const PORT = Number(process.env.QC_CDP_PORT || 9222), BASE = 'http://127.0.0.1:' + PORT
 const OUT_DIR = process.env.QC_OUT || path.join(process.env.USERPROFILE || process.env.HOME || '.', '.qianchuan-cruise', 'out')
 const CARD = '.main-vmok-plugin-create-material-list-card-item'
 const NAV = '.main-vmok-plugin-tabs__nav-list'

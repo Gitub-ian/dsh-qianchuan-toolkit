@@ -7,6 +7,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { pickAllOnTarget } from './pick-all.mjs';
 import { connect, sleep, listPages, browserSend } from '../../live-control/scripts/cdp-lib.mjs';
+// 复制技能固定连 9223 的独立浏览器实例（与 9222 的巡航实例物理隔离，互不抢标签）。
+process.env.QC_CDP_PORT = process.env.QC_CDP_PORT || '9223';
 
 // 确认单/截图落盘根目录：默认当前工作目录（可移植），需要固定位置时用 QC_WORKDIR 指定。
 // confirm 与 delete 必须在同一个 QC_WORKDIR 下运行，否则找不到确认单。

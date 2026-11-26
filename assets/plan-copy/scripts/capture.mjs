@@ -3,6 +3,8 @@
 // 用法: node capture.mjs <aavid> <planId> <outJson> [newDateSuffix]
 import fs from 'node:fs';
 import { connect, sleep, listPages } from '../../live-control/scripts/cdp-lib.mjs';
+// 复制技能固定连 9223 的独立浏览器实例（与 9222 的巡航实例物理隔离，互不抢标签）。
+process.env.QC_CDP_PORT = process.env.QC_CDP_PORT || '9223';
 
 const aavid = process.argv[2], planId = process.argv[3], outFile = process.argv[4], suffix = process.argv[5] || '1124';
 if (!aavid || !planId || !outFile) { console.log('usage: node capture.mjs <aavid> <planId> <outJson> [suffix]'); process.exit(2); }
